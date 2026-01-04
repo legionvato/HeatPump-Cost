@@ -1,13 +1,194 @@
 import streamlit as st
+import pandas as pd
+from io import BytesIO
+from datetime import datetime
 
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
+from reportlab.lib.units import cm
+
+
+# =========================================================
+# Brand / Theme (edit these 6 colors to match treimax.ge)
+# =========================================================
+BRAND = {
+    # Core
+    "primary": "#0B2A3B",      # deep navy (header/sidebar/button)
+    "accent":  "#00A3D9",      # bright accent (CTA / highlights)
+    "danger":  "#E53935",      # warnings / negative delta
+    "bg":      "#F6F8FB",      # app background
+    "card":    "#FFFFFF",      # card background
+    "text":    "#0F172A",      # main text
+    "muted":   "#64748B",      # secondary text
+    "border":  "#E2E8F0",      # card borders
+}
+
+APP_TITLE = "Heat Pump vs Gas Boiler"
+APP_VERSION = "V1"
+PDF_TITLE = f"{APP_TITLE} ({APP_VERSION})"
+
+
+# =========================================================
+# Streamlit config
+# =========================================================
 st.set_page_config(
-    page_title="Heat Pump vs Gas Boiler (V1)",
+    page_title=f"{APP_TITLE} ({APP_VERSION})",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-st.title("Heat Pump vs Gas Boiler (V1)")
-st.caption("V1 compares annual heating cost using a simple, defensible energy balance model.")
+# =========================================================
+# CSS styling
+# =========================================================
+st.markdown(
+    f"""
+    <style>
+      /* Page background */
+      .stApp {{
+        background: {BRAND["bg"]};
+        color: {BRAND["text"]};
+      }}
+
+      /* Reduce top padding a bit */
+      .block-container {{
+        padding-top: 1.2rem;
+        padding-bottom: 2rem;
+      }}
+
+      /* Sidebar styling */
+      section[data-testid="stSidebar"] > div {{
+        background: {BRAND["primary"]};
+        color: white;
+      }}
+      section[data-testid="stSidebar"] .stMarkdown, 
+      section[data-testid="stSidebar"] label,
+      section[data-testid="stSidebar"] p,
+      section[data-testid="stSidebar"] span {{
+        color: rgba(255,255,255,0.90) !important;
+      }}
+
+      /* Inputs in sidebar */
+      section[data-testid="stSidebar"] input {{
+        background: rgba(255,255,255,0.12) !important;
+        color: white !important;
+        border: 1px solid rgba(255,255,255,0.18) !important;
+      }}
+
+      /* Sliders */
+      section[data-testid="stSidebar"] [data-baseweb="slider"] {{
+        color: white !important;
+      }}
+
+      /* Buttons */
+      .stButton > button, .stDownloadButton > button {{
+        background: {BRAND["accent"]} !important;
+        color: white !important;
+        border: 0 !important;
+        border-radius: 12px !important;
+        padding: 0.6rem 0.9rem !important;
+        font-weight: 600 !important;
+      }}
+      .stButton > button:hover, .stDownloadButton > button:hover {{
+        filter: brightness(0.95);
+      }}
+
+      /* Cards look for metric blocks */
+      div[data-testid="stMetric"] {{
+        background: {BRAND["card"]};
+        border: 1px solid {BRAND["border"]};
+        border-radius: 16px;
+        padding: 14px 14px;
+        box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+      }}
+
+      /* Generic card container styling for sections */
+      .tmx-card {{
+        background: {BRAND["card"]};
+        border: 1px solid {BRAND["border"]};
+        border-radius: 18px;
+        padding: 16px 16px;
+        box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+        margin-bottom: 12px;
+      }}
+
+      /* Headings */
+      h1, h2, h3 {{
+        color: {BRAND["text"]};
+      }}
+      .tmx-sub {{
+        color: {BRAND["muted"]};
+        margin-top: -6px;
+      }}
+
+      /* Info box tweak */
+      div[data-testid="stAlert"] {{
+        border-radius: 16px;
+      }}
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+# =========================================================
+# PDF builder
+# =========================================================
+def build_pdf_report(payload: dict) -> bytes:
+    buf = BytesIO()
+    c = canvas.Canvas(buf, pagesize=A4)
+    w, h = A4
+
+    left = 2.0 * cm
+    y = h - 2.0 * cm
+
+    def line(text, dy=0.7 * cm, font="Helvetica", size=11):
+        nonlocal y
+        if y < 2.0 * cm:
+            c.showPage()
+            y = h - 2.0 * cm
+        c.setFont(font, size)
+        c.drawString(left, y, text)
+        y -= dy
+
+    c.setTitle(PDF_TITLE)
+
+    # Header
+    line(PDF_TITLE + " – Summary Report", dy=0.9 * cm, font="Helvetica-Bold", size=14)
+    line(f"Generated: {payload['meta']['generated_at']}", dy=0.9 * cm, size=10)
+    c.line(left, y, w - left, y)
+    y -= 0.7 * cm
+
+    # Inputs
+    line("Inputs", dy=0.8 * cm, font="Helvetica-Bold", size=12)
+    for k, v in payload["inputs"].items():
+        line(f"- {k}: {v}", size=11)
+
+    y -= 0.2 * cm
+
+    # Results
+    line("Results", dy=0.8 * cm, font="Helvetica-Bold", size=12)
+    for k, v in payload["results"].items():
+        line(f"- {k}: {v}", size=11)
+
+    y -= 0.2 * cm
+
+    # Model note
+    line("Model note (defensible energy balance):", dy=0.7 * cm, font="Helvetica-Bold", size=11)
+    line("Gas: (useful heat / boiler eff.) × gas price.", size=10)
+    line("HP+Booster: base HP supplies low-temp heat + booster source heat; booster upgrades to 70°C.", size=10)
+
+    c.showPage()
+    c.save()
+    return buf.getvalue()
+
+
+# =========================================================
+# Header
+# =========================================================
+st.title(f"{APP_TITLE} ({APP_VERSION})")
+st.markdown(
+    '<div class="tmx-sub">Compares annual heating cost using a simple, defensible energy balance model.</div>',
+    unsafe_allow_html=True,
+)
 
 st.info(
     "Model logic (important):\n"
@@ -17,10 +198,13 @@ st.info(
     "This avoids over-optimistic results."
 )
 
-# -------------------------
-# Inputs (minimal set)
-# -------------------------
+# =========================================================
+# Sidebar inputs
+# =========================================================
 with st.sidebar:
+    st.markdown(f"### {APP_TITLE}")
+    st.caption("Inputs & assumptions")
+
     st.header("1) Heating Demand")
     q_annual_kwh_th = st.number_input(
         "Annual useful heat demand (kWh_th/year)",
@@ -45,7 +229,6 @@ with st.sidebar:
         step=0.01,
     )
 
-    # Needed to convert m³ to kWh_gas (bills often show this; keep editable)
     kwh_per_m3 = st.number_input(
         "Gas energy content (kWh per m³)",
         min_value=5.0,
@@ -101,30 +284,24 @@ with st.sidebar:
             step=10_000.0,
         )
 
-# -------------------------
+# =========================================================
 # Calculations
-# -------------------------
+# =========================================================
 f_boost = boost_share_pct / 100.0
 
 Q70 = q_annual_kwh_th * f_boost               # kWh_th delivered at 70°C (needs booster)
 Qlow = q_annual_kwh_th * (1.0 - f_boost)      # kWh_th delivered without boosting
 
-# Booster electricity: it delivers Q70 at 70°C
 E_boost = Q70 / cop_boost if cop_boost > 0 else 0.0
 
-# Booster source heat drawn from base stage (energy balance):
 # Q70 = Q_source + E_boost  => Q_source = Q70 - E_boost
 Q_source = Q70 - E_boost
 
-# Base HP must provide both:
-# - all low-temp heat (Qlow)
-# - and booster source heat (Q_source)
+# Base HP provides low-temp heat + booster source heat
 Q_base_out = Qlow + Q_source
-
 E_base = Q_base_out / cop_base if cop_base > 0 else 0.0
-E_total_hp = E_base + E_boost
 
-# Costs
+E_total_hp = E_base + E_boost
 cost_hp_gel = E_total_hp * el_price_gel_per_kwh
 
 gas_input_kwh = q_annual_kwh_th / eta_boiler if eta_boiler > 0 else 0.0
@@ -132,73 +309,146 @@ gas_volume_m3 = gas_input_kwh / kwh_per_m3 if kwh_per_m3 > 0 else 0.0
 cost_gas_gel = gas_volume_m3 * gas_price_gel_per_m3
 
 annual_savings_gel = cost_gas_gel - cost_hp_gel
-
-# Effective COP for the whole HP+Booster system (useful to explain to clients)
 cop_effective = q_annual_kwh_th / E_total_hp if E_total_hp > 0 else 0.0
 
-# -------------------------
-# Output
-# -------------------------
+# =========================================================
+# Top KPI row
+# =========================================================
 st.divider()
+k1, k2, k3, k4 = st.columns(4)
+k1.metric("Annual useful heat", f"{q_annual_kwh_th:,.0f} kWh_th")
+k2.metric("70°C share", f"{boost_share_pct}%")
+k3.metric("Electricity price", f"{el_price_gel_per_kwh:.3f} GEL/kWh")
+k4.metric("Gas price", f"{gas_price_gel_per_m3:.2f} GEL/m³")
 
-a1, a2, a3, a4 = st.columns(4)
-a1.metric("Annual useful heat", f"{q_annual_kwh_th:,.0f} kWh_th")
-a2.metric("70°C share", f"{boost_share_pct}%")
-a3.metric("Electricity price", f"{el_price_gel_per_kwh:.3f} GEL/kWh")
-a4.metric("Gas price", f"{gas_price_gel_per_m3:.2f} GEL/m³")
+# =========================================================
+# Tabs: Summary / Details / Export
+# =========================================================
+tab1, tab2, tab3 = st.tabs(["📊 Summary", "🧮 Details", "📄 Export"])
 
-st.divider()
+with tab1:
+    st.markdown('<div class="tmx-card">', unsafe_allow_html=True)
+    r1, r2, r3 = st.columns(3)
+    r1.metric("Annual cost (Boiler)", f"{cost_gas_gel:,.0f} GEL")
+    r2.metric("Annual cost (HP+Booster)", f"{cost_hp_gel:,.0f} GEL")
 
-c1, c2 = st.columns(2)
-
-with c1:
-    st.subheader("Gas Boiler (Baseline)")
-    st.write(f"Boiler efficiency (η): **{eta_boiler:.2f}**")
-    st.write(f"Gas input energy: **{gas_input_kwh:,.0f} kWh_gas/year**")
-    st.write(f"Gas volume: **{gas_volume_m3:,.0f} m³/year**")
-    st.write(f"Annual cost: **{cost_gas_gel:,.0f} GEL/year**")
-
-with c2:
-    st.subheader("Heat Pump + Booster to 70°C")
-    st.write(f"Base COP: **{cop_base:.2f}**")
-    st.write(f"Booster COP: **{cop_boost:.2f}**")
-    st.write(f"Booster delivered heat (70°C): **{Q70:,.0f} kWh_th/year**")
-    st.write(f"Base HP delivered heat: **{Q_base_out:,.0f} kWh_th/year**")
-    st.write("---")
-    st.write(f"Base electricity: **{E_base:,.0f} kWh_el/year**")
-    st.write(f"Booster electricity: **{E_boost:,.0f} kWh_el/year**")
-    st.write(f"Total electricity: **{E_total_hp:,.0f} kWh_el/year**")
-    st.write(f"Effective system COP: **{cop_effective:.2f}**")
-    st.write(f"Annual cost: **{cost_hp_gel:,.0f} GEL/year**")
-
-st.divider()
-
-st.subheader("Result")
-
-r1, r2, r3 = st.columns(3)
-r1.metric("Annual cost (Boiler)", f"{cost_gas_gel:,.0f} GEL")
-r2.metric("Annual cost (HP+Booster)", f"{cost_hp_gel:,.0f} GEL")
-
-if annual_savings_gel >= 0:
-    r3.metric("Annual savings", f"{annual_savings_gel:,.0f} GEL")
-else:
-    r3.metric("Annual difference", f"{annual_savings_gel:,.0f} GEL")
-    st.warning("HP+Booster is more expensive than gas under these inputs.")
-
-# Optional payback
-if enable_payback:
-    delta_capex = capex_hp_booster_gel - capex_boiler_gel
-    st.divider()
-    st.subheader("Payback (Optional)")
-
-    p1, p2, p3 = st.columns(3)
-    p1.metric("Extra CAPEX (HP+Booster − Boiler)", f"{delta_capex:,.0f} GEL")
-
-    if annual_savings_gel > 0 and delta_capex > 0:
-        payback_years = delta_capex / annual_savings_gel
-        p2.metric("Payback (years)", f"{payback_years:.2f}")
-        p3.metric("Payback (months)", f"{payback_years * 12:.1f}")
+    if annual_savings_gel >= 0:
+        r3.metric("Annual savings", f"{annual_savings_gel:,.0f} GEL")
     else:
-        p2.metric("Payback (years)", "N/A")
-        p3.metric("Payback (months)", "N/A")
-        st.caption("Payback requires: annual savings > 0 and extra CAPEX > 0.")
+        r3.metric("Annual difference", f"{annual_savings_gel:,.0f} GEL")
+        st.warning("HP+Booster is more expensive than gas under these inputs.")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown('<div class="tmx-card">', unsafe_allow_html=True)
+    df_cost = pd.DataFrame(
+        {"System": ["Gas Boiler", "HP + Booster"], "Annual cost (GEL)": [cost_gas_gel, cost_hp_gel]}
+    ).set_index("System")
+    st.subheader("Cost comparison")
+    st.bar_chart(df_cost)
+    st.caption("Tip: Use the sidebar to adjust inputs and see the impact instantly.")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    if enable_payback:
+        st.markdown('<div class="tmx-card">', unsafe_allow_html=True)
+        st.subheader("Payback (Optional)")
+        delta_capex = capex_hp_booster_gel - capex_boiler_gel
+
+        p1, p2, p3 = st.columns(3)
+        p1.metric("Extra CAPEX (HP+Booster − Boiler)", f"{delta_capex:,.0f} GEL")
+
+        if annual_savings_gel > 0 and delta_capex > 0:
+            payback_years = delta_capex / annual_savings_gel
+            p2.metric("Payback (years)", f"{payback_years:.2f}")
+            p3.metric("Payback (months)", f"{payback_years * 12:.1f}")
+        else:
+            p2.metric("Payback (years)", "N/A")
+            p3.metric("Payback (months)", "N/A")
+            st.caption("Payback requires: annual savings > 0 and extra CAPEX > 0.")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+with tab2:
+    c1, c2 = st.columns(2)
+
+    with c1:
+        st.markdown('<div class="tmx-card">', unsafe_allow_html=True)
+        st.subheader("Gas Boiler (Baseline)")
+        st.write(f"Boiler efficiency (η): **{eta_boiler:.2f}**")
+        st.write(f"Gas input energy: **{gas_input_kwh:,.0f} kWh_gas/year**")
+        st.write(f"Gas volume: **{gas_volume_m3:,.0f} m³/year**")
+        st.write(f"Annual cost: **{cost_gas_gel:,.0f} GEL/year**")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    with c2:
+        st.markdown('<div class="tmx-card">', unsafe_allow_html=True)
+        st.subheader("Heat Pump + Booster to 70°C")
+        st.write(f"Base COP: **{cop_base:.2f}**")
+        st.write(f"Booster COP: **{cop_boost:.2f}**")
+        st.write(f"Booster delivered heat (70°C): **{Q70:,.0f} kWh_th/year**")
+        st.write(f"Base HP delivered heat: **{Q_base_out:,.0f} kWh_th/year**")
+        st.write("---")
+        st.write(f"Base electricity: **{E_base:,.0f} kWh_el/year**")
+        st.write(f"Booster electricity: **{E_boost:,.0f} kWh_el/year**")
+        st.write(f"Total electricity: **{E_total_hp:,.0f} kWh_el/year**")
+        st.write(f"Effective system COP: **{cop_effective:.2f}**")
+        st.write(f"Annual cost: **{cost_hp_gel:,.0f} GEL/year**")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown('<div class="tmx-card">', unsafe_allow_html=True)
+    st.subheader("Energy balance sanity check")
+    st.write("This confirms we are not double-counting or under-counting energy in the booster chain.")
+    st.write(f"Booster heat balance: Q70 = Q_source + E_boost → **{Q70:,.0f} = {Q_source:,.0f} + {E_boost:,.0f}** (kWh)")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+with tab3:
+    # Build PDF payload
+    pdf_payload = {
+        "meta": {"generated_at": datetime.now().strftime("%Y-%m-%d %H:%M")},
+        "inputs": {
+            "Annual useful heat demand (kWh_th/year)": f"{q_annual_kwh_th:,.0f}",
+            "Boiler efficiency (η)": f"{eta_boiler:.2f}",
+            "Gas price (GEL/m³)": f"{gas_price_gel_per_m3:.2f}",
+            "Gas energy content (kWh/m³)": f"{kwh_per_m3:.2f}",
+            "Electricity price (GEL/kWh)": f"{el_price_gel_per_kwh:.3f}",
+            "Base HP COP": f"{cop_base:.2f}",
+            "Booster COP (to 70°C)": f"{cop_boost:.2f}",
+            "70°C share (%)": f"{boost_share_pct}%",
+        },
+        "results": {
+            "Gas boiler annual cost (GEL/year)": f"{cost_gas_gel:,.0f}",
+            "HP+Booster annual cost (GEL/year)": f"{cost_hp_gel:,.0f}",
+            "Annual savings (GEL/year)": f"{annual_savings_gel:,.0f}",
+            "Effective system COP": f"{cop_effective:.2f}",
+            "Total electricity (kWh_el/year)": f"{E_total_hp:,.0f}",
+            "Gas volume (m³/year)": f"{gas_volume_m3:,.0f}",
+        },
+    }
+    pdf_bytes = build_pdf_report(pdf_payload)
+
+    st.markdown('<div class="tmx-card">', unsafe_allow_html=True)
+    st.subheader("PDF report")
+    st.download_button(
+        label="📄 Download PDF report",
+        data=pdf_bytes,
+        file_name=f"hp_vs_boiler_report_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
+        mime="application/pdf",
+        use_container_width=True,
+    )
+    st.caption("One-page client-ready summary of inputs + results.")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown('<div class="tmx-card">', unsafe_allow_html=True)
+    st.subheader("Export inputs/results as CSV")
+    df_export = pd.DataFrame(
+        [{"Type": "Input", "Key": k, "Value": v} for k, v in pdf_payload["inputs"].items()]
+        + [{"Type": "Result", "Key": k, "Value": v} for k, v in pdf_payload["results"].items()]
+    )
+    csv_bytes = df_export.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        label="⬇️ Download CSV",
+        data=csv_bytes,
+        file_name=f"hp_vs_boiler_export_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+        mime="text/csv",
+        use_container_width=True,
+    )
+    st.markdown("</div>", unsafe_allow_html=True)
+
