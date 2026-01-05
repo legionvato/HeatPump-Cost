@@ -22,7 +22,7 @@ st.set_page_config(
 )
 
 APP_TITLE = "Treimax Energy Tools"
-APP_VER = "V8 (Adds CO2 saved: Gas Boiler → Heat Pump + Save/Load JSON)"
+APP_VER = "V9 (Project name + Boiler CO2 only in HP tool + Save/Load JSON)"
 
 
 # =========================================================
@@ -64,6 +64,9 @@ def hp_booster_chain(Q_low: float, Q_high: float, cop_base: float, cop_boost: fl
 
 
 def build_pdf_report(title: str, lines: list[str]) -> bytes:
+    """
+    Note: uses ReportLab built-in fonts (Helvetica). Keep PDF text ASCII to avoid □ boxes.
+    """
     buf = BytesIO()
     c = canvas.Canvas(buf, pagesize=A4)
     w, h = A4
@@ -86,7 +89,9 @@ def build_pdf_report(title: str, lines: list[str]) -> bytes:
     y -= 0.8 * cm
 
     for t in lines:
-        line(t, size=11)
+        # Ensure PDF stays ASCII-safe
+        safe = (t or "").replace("CO₂", "CO2").replace("tCO₂", "tCO2")
+        line(safe, size=11)
 
     c.showPage()
     c.save()
@@ -120,8 +125,8 @@ def harmonic_mean_weighted_by_capacity(cap_list, eff_list):
 # =========================================================
 # Save/Load JSON (no DB)
 # =========================================================
-# Store only what we need from session_state (stable keys)
 PROJECT_KEYS = [
+    "project_name",
     "active_tool",
 
     # HEATING
@@ -143,8 +148,6 @@ PROJECT_KEYS = [
     "heat_checkpoint_cop",
     "heat_booster_installed",
     "heat_cop_boost",
-    "heat_grid_CO2_factor",  # NEW: kgCO2/kWh_el
-
     "heat_enable_payback",
     "heat_capex_hp",
     "heat_capex_boiler",
@@ -179,7 +182,6 @@ PROJECT_KEYS = [
     "ch_capex_b",
 ]
 
-# Add keys for 4 lines per setup
 for setup in ["a", "b"]:
     for i in range(1, 5):
         PROJECT_KEYS += [
@@ -211,6 +213,10 @@ def apply_project_state(payload: dict) -> None:
 st.title(f"{APP_TITLE} — {APP_VER}")
 
 with st.sidebar:
+    st.header("Project")
+    st.text_input("Project name", value=st.session_state.get("project_name", ""), key="project_name")
+
+    st.divider()
     st.header("Project Save/Load (JSON)")
     c1, c2 = st.columns(2)
 
@@ -241,7 +247,6 @@ with st.sidebar:
         )
 
     st.divider()
-
     tool = st.radio(
         "Tool",
         ["Heat Pump vs Boiler", "Chiller comparison (payback)"],
@@ -254,7 +259,6 @@ with st.sidebar:
 # =========================================================
 HP_MAX_SUPPLY_C = 50
 GAS_CO2_FACTOR_KG_PER_KWH = 0.202  # kgCO2 per kWh_gas (combustion only)
-GRID_CO2_FACTOR_DEFAULT = 0.35     # NEW: kgCO2 per kWh_el (adjust as needed)
 
 BUILDING_TYPES = ["Office", "Hotel", "Hospital"]
 INSULATION_LEVELS = ["Poor / Old", "Standard", "Good / New", "High-performance"]
@@ -301,11 +305,11 @@ def run_heating():
     st.subheader("Heat Pump vs Gas Boiler")
     st.info(
         "Assumptions:\n"
-        f"- Base HP max supply temperature = {HP_MAX_SUPPLY_C}°C\n"
-        "- Any demand requiring >50°C must be boosted (if booster installed)\n"
+        f"- Base HP max supply temperature = {HP_MAX_SUPPLY_C}C\n"
+        "- Any demand requiring >50C must be boosted (if booster installed)\n"
         "- Booster COP is constant\n"
         "- Gas baseline uses seasonal boiler efficiency and gas price\n"
-        "- CO2 saved = Gas boiler CO2 − Heat pump CO2 (HP CO2 uses grid factor)"
+        "- CO2 shown is GAS BOILER CO2 only (baseline)"
     )
 
     # Sidebar inputs
@@ -318,7 +322,7 @@ def run_heating():
             index=1,
             key="heat_mode",
         )
-        st.selectbox("Application", APPLICATIONS, index=1, key="heat_application")
+        st.selectbox("Application", APPLICATIONS, index=0, key="heat_application")  # default to no DHW
         st.selectbox("Climate", CLIMATES, index=0, key="heat_climate")
 
         st.divider()
@@ -328,27 +332,16 @@ def run_heating():
             min_value=0.001, value=0.30, step=0.01, format="%.3f",
             key="heat_el_price"
         )
-        st.number_input("Gas price (GEL/m³)", min_value=0.01, value=1.29, step=0.01, key="heat_gas_price")
+        st.number_input("Gas price (GEL/m3)", min_value=0.01, value=1.29, step=0.01, key="heat_gas_price")
         with st.expander("Advanced: Gas conversion", expanded=False):
-            st.number_input("Gas energy content (kWh/m³)", min_value=5.0, max_value=15.0, value=10.0, step=0.1, key="heat_kwh_per_m3")
-
-        with st.expander("Advanced: CO2 factors", expanded=False):
-            st.number_input(
-                "Grid CO2 factor (kgCO2/kWh_el)",
-                min_value=0.0,
-                value=float(st.session_state.get("heat_grid_CO2_factor", GRID_CO2_FACTOR_DEFAULT)),
-                step=0.01,
-                format="%.3f",
-                key="heat_grid_CO2_factor",
-            )
-            st.caption("Used to compute Heat Pump CO2. CO2 saved = Gas − HP.")
+            st.number_input("Gas energy content (kWh/m3)", min_value=5.0, max_value=15.0, value=10.0, step=0.1, key="heat_kwh_per_m3")
 
         st.divider()
         st.subheader("Boiler baseline")
-        st.number_input("Boiler seasonal efficiency (η)", min_value=0.50, max_value=1.00, value=0.93, step=0.01, key="heat_eta_boiler")
+        st.number_input("Boiler seasonal efficiency (eta)", min_value=0.50, max_value=1.00, value=0.93, step=0.01, key="heat_eta_boiler")
 
         st.divider()
-        st.subheader("Base HP seasonal COP (≤50°C supply)")
+        st.subheader("Base HP seasonal COP (<=50C supply)")
         st.radio("COP source", ["Manual", "From datasheet SCOP"], index=0, key="heat_cop_source")
 
         heat_climate = st.session_state.get("heat_climate", "Tbilisi")
@@ -357,26 +350,26 @@ def run_heating():
         cop_base = 2.8  # overwritten below
 
         if cop_source == "From datasheet SCOP":
-            st.number_input("SCOP (datasheet)", min_value=0.5, value=3.78, step=0.01, key="heat_scop")
+            st.number_input("SCOP (datasheet, seasonal)", min_value=0.5, value=3.78, step=0.01, key="heat_scop")
             st.radio("Use SCOP", ["Use SCOP directly", "Advanced: 3-point winter"], index=0, key="heat_cop_method_scop")
             if st.session_state.get("heat_cop_method_scop") == "Use SCOP directly":
                 cop_base = float(st.session_state.get("heat_scop", 3.78))
             else:
-                st.number_input("COP at −3°C (W≤50)", min_value=0.1, value=2.6, step=0.05, key="heat_base_cop_m3")
-                st.number_input("COP at +2°C (W≤50)", min_value=0.1, value=2.8, step=0.05, key="heat_base_cop_p2")
-                st.number_input("COP at +7°C (W≤50)", min_value=0.1, value=3.0, step=0.05, key="heat_base_cop_p7")
+                st.number_input("COP at -3C (W<=50)", min_value=0.1, value=2.6, step=0.05, key="heat_base_cop_m3")
+                st.number_input("COP at +2C (W<=50)", min_value=0.1, value=2.8, step=0.05, key="heat_base_cop_p2")
+                st.number_input("COP at +7C (W<=50)", min_value=0.1, value=3.0, step=0.05, key="heat_base_cop_p7")
                 pts = {-3: st.session_state["heat_base_cop_m3"], 2: st.session_state["heat_base_cop_p2"], 7: st.session_state["heat_base_cop_p7"]}
                 cop_base = weighted_avg(pts, SH_WEIGHTS_3[heat_climate])
                 st.caption(f"Derived seasonal COP: {cop_base:.2f}")
         else:
             st.radio("Manual method", ["Single seasonal COP", "Advanced: 3-point winter"], index=0, key="heat_cop_method_manual")
             if st.session_state.get("heat_cop_method_manual") == "Single seasonal COP":
-                st.number_input("Base HP seasonal COP (≤50°C)", min_value=0.5, value=2.8, step=0.1, key="heat_cop_base_manual")
+                st.number_input("Base HP seasonal COP (<=50C)", min_value=0.5, value=2.8, step=0.1, key="heat_cop_base_manual")
                 cop_base = float(st.session_state.get("heat_cop_base_manual", 2.8))
             else:
-                st.number_input("COP at −3°C (W≤50)", min_value=0.1, value=2.6, step=0.05, key="heat_base_cop_m3")
-                st.number_input("COP at +2°C (W≤50)", min_value=0.1, value=2.8, step=0.05, key="heat_base_cop_p2")
-                st.number_input("COP at +7°C (W≤50)", min_value=0.1, value=3.0, step=0.05, key="heat_base_cop_p7")
+                st.number_input("COP at -3C (W<=50)", min_value=0.1, value=2.6, step=0.05, key="heat_base_cop_m3")
+                st.number_input("COP at +2C (W<=50)", min_value=0.1, value=2.8, step=0.05, key="heat_base_cop_p2")
+                st.number_input("COP at +7C (W<=50)", min_value=0.1, value=3.0, step=0.05, key="heat_base_cop_p7")
                 pts = {-3: st.session_state["heat_base_cop_m3"], 2: st.session_state["heat_base_cop_p2"], 7: st.session_state["heat_base_cop_p7"]}
                 cop_base = weighted_avg(pts, SH_WEIGHTS_3[heat_climate])
                 st.caption(f"Derived seasonal COP: {cop_base:.2f}")
@@ -386,8 +379,8 @@ def run_heating():
 
         st.divider()
         st.subheader("Booster")
-        st.checkbox("Booster installed (for >50°C loads)", value=True, key="heat_booster_installed")
-        if st.session_state.get("heat_booster_installed", True):
+        st.checkbox("Booster installed (for >50C loads)", value=False, key="heat_booster_installed")
+        if st.session_state.get("heat_booster_installed", False):
             st.number_input("Booster COP (constant)", min_value=0.5, value=6.3, step=0.1, key="heat_cop_boost")
         else:
             st.session_state["heat_cop_boost"] = 0.0
@@ -401,15 +394,15 @@ def run_heating():
     # Demand (main)
     st.markdown("### Demand")
     heat_mode = st.session_state.get("heat_mode", "Scratch project (estimate demand)")
-    heat_application = st.session_state.get("heat_application", APPLICATIONS[1])
+    heat_application = st.session_state.get("heat_application", APPLICATIONS[0])
     heat_climate = st.session_state.get("heat_climate", CLIMATES[0])
 
     if heat_mode == "Existing building (known demand)":
-        st.number_input("Annual useful heat demand (kWh_th/year)", min_value=1.0, value=2_000_000.0, step=50_000.0, key="heat_q_annual")
-        st.selectbox("Building type (DHW preset only)", BUILDING_TYPES, index=1, key="heat_building_type")
+        st.number_input("Annual useful heat demand (kWh_th/year)", min_value=1.0, value=344_100.0, step=50_000.0, key="heat_q_annual")
+        st.selectbox("Building type (benchmarks only)", BUILDING_TYPES, index=1, key="heat_building_type")
         building_type = st.session_state.get("heat_building_type", "Hotel")
         insulation = st.session_state.get("heat_insulation", "Standard")
-        Q_total = float(st.session_state.get("heat_q_annual", 2_000_000.0))
+        Q_total = float(st.session_state.get("heat_q_annual", 344_100.0))
     else:
         colA, colB = st.columns([1.2, 1.0])
 
@@ -421,18 +414,18 @@ def run_heating():
 
             st.radio(
                 "Demand method",
-                ["From area (m²) + benchmarks", "From peak heat load (kW) + FLH", "Direct annual useful heat demand"],
-                index=0,
+                ["From area (m2) + benchmarks", "From peak heat load (kW) + FLH", "Direct annual useful heat demand"],
+                index=2,
                 key="heat_demand_method",
             )
             dm = st.session_state.get("heat_demand_method")
 
-            if dm == "From area (m²) + benchmarks":
-                st.number_input("Heated area (m²)", min_value=1.0, value=12000.0, step=100.0, key="heat_area_m2")
+            if dm == "From area (m2) + benchmarks":
+                st.number_input("Heated area (m2)", min_value=1.0, value=12000.0, step=100.0, key="heat_area_m2")
                 area_m2 = float(st.session_state.get("heat_area_m2", 12000.0))
                 intensity = float(BASE_KWH_PER_M2_YEAR[building_type][insulation]) * float(CLIMATE_INTENSITY_FACTOR[heat_climate])
                 Q_est = area_m2 * intensity
-                st.caption(f"Benchmark intensity: {intensity:.0f} kWh/m²·year (incl. climate factor)")
+                st.caption(f"Benchmark intensity: {intensity:.0f} kWh/m2·year (incl. climate factor)")
             elif dm == "From peak heat load (kW) + FLH":
                 st.number_input("Peak heating load (kW)", min_value=1.0, value=500.0, step=10.0, key="heat_peak_kw")
                 peak_kw = float(st.session_state.get("heat_peak_kw", 500.0))
@@ -446,7 +439,7 @@ def run_heating():
                     st.caption(f"FLH preset: {flh_used:.0f} h/year (incl. climate factor)")
                 Q_est = peak_kw * flh_used
             else:
-                Q_est = float(st.session_state.get("heat_q_annual", 2_000_000.0))
+                Q_est = float(st.session_state.get("heat_q_annual", 344_100.0))
                 st.number_input("Annual useful heat demand (kWh_th/year) — provided", min_value=1.0, value=Q_est, step=50_000.0, key="heat_q_annual")
 
         with colB:
@@ -456,12 +449,13 @@ def run_heating():
             st.caption("You can overwrite this number anytime.")
 
     # SH/DHW split
+    # If user picks DHW anyway, keep old logic, but defaults are no DHW.
     if heat_application == "Space heating only":
         dhw_share_pct = 0
         sh_share_pct = 100
         dhw_target_c = 50
     else:
-        preset = int(round(DHW_SHARE_PRESET[building_type] * 100))
+        preset = int(round(DHW_SHARE_PRESET.get(building_type, 0.10) * 100))
         st.checkbox("Override DHW share", value=False, key="heat_dhw_override")
         if st.session_state.get("heat_dhw_override", False):
             st.slider("DHW share (%)", 0, 100, preset, 1, key="heat_dhw_share_pct")
@@ -471,7 +465,7 @@ def run_heating():
             st.session_state["heat_dhw_share_pct"] = dhw_share_pct
         sh_share_pct = 100 - dhw_share_pct
 
-        st.checkbox("High-temp DHW required (≥60°C)", value=False, key="heat_high_temp_dhw")
+        st.checkbox("High-temp DHW required (>=60C)", value=False, key="heat_high_temp_dhw")
         dhw_target_c = 60 if st.session_state.get("heat_high_temp_dhw", False) else 50
 
     Q_sh = Q_total * (sh_share_pct / 100.0)
@@ -479,28 +473,29 @@ def run_heating():
 
     # Temperature regime and boosted fraction
     st.divider()
-    st.markdown("### Space heating temperatures (base HP capped at 50°C)")
+    st.markdown("### Space heating temperatures (base HP capped at 50C)")
     if Q_sh > 0:
-        st.selectbox("Space heating regime", list(HEATING_REGIMES.keys()), index=3, key="heat_regime_name")
+        st.selectbox("Space heating regime", list(HEATING_REGIMES.keys()), index=1, key="heat_regime_name")  # default 50/40
         regime_name = st.session_state.get("heat_regime_name")
         supply_c, _ = HEATING_REGIMES[regime_name]
         st.checkbox("Mixed systems (optional)", value=False, key="heat_mixed_systems")
         if not st.session_state.get("heat_mixed_systems", False):
             sh_high_frac = 1.0 if supply_c > HP_MAX_SUPPLY_C else 0.0
-            st.info(f"Selected supply {supply_c}°C → SH boosted fraction = {'100%' if sh_high_frac==1 else '0%'}")
+            st.info(f"Selected supply {supply_c}C -> SH boosted fraction = {'100%' if sh_high_frac==1 else '0%'}")
         else:
-            st.slider("Fraction of SH needing >50°C (%)", 0, 100, 40, 1, key="heat_sh_high_frac_pct")
+            st.slider("Fraction of SH needing >50C (%)", 0, 100, 40, 1, key="heat_sh_high_frac_pct")
             sh_high_frac = float(st.session_state.get("heat_sh_high_frac_pct", 40)) / 100.0
     else:
         sh_high_frac = 0.0
 
     dhw_high_frac = 1.0 if (Q_dhw > 0 and dhw_target_c > HP_MAX_SUPPLY_C) else 0.0
 
-    booster_installed = bool(st.session_state.get("heat_booster_installed", True))
+    booster_installed = bool(st.session_state.get("heat_booster_installed", False))
     cop_boost = float(st.session_state.get("heat_cop_boost", 0.0)) if booster_installed else 0.0
 
-    if not booster_installed and (sh_high_frac > 0 or dhw_high_frac > 0):
-        st.warning("Booster is OFF but some demand needs >50°C. Model forces boosted fractions to 0% (system would need redesign).")
+    # If booster is OFF but some demand needs >50C, warn and force boosted fractions to 0 (as in your original model).
+    if (not booster_installed) and (sh_high_frac > 0 or dhw_high_frac > 0):
+        st.warning("Booster is OFF but some demand needs >50C. Model forces boosted fractions to 0% (system would need redesign).")
         sh_high_frac = 0.0
         dhw_high_frac = 0.0
 
@@ -538,7 +533,6 @@ def run_heating():
     gas_price = float(st.session_state.get("heat_gas_price", 1.29))
     kwh_per_m3 = float(st.session_state.get("heat_kwh_per_m3", 10.0))
     eta_boiler = float(st.session_state.get("heat_eta_boiler", 0.93))
-    grid_CO2_factor = float(st.session_state.get("heat_grid_CO2_factor", GRID_CO2_FACTOR_DEFAULT))
 
     chain_sh = hp_booster_chain(Q_sh_low, Q_sh_high, cop_base, cop_boost)
     chain_dhw = hp_booster_chain(Q_dhw_low, Q_dhw_high, cop_base, cop_boost)
@@ -547,18 +541,13 @@ def run_heating():
     cost_hp = E_total_hp * el_price
 
     gas_input_kwh = Q_total / eta_boiler if eta_boiler > 0 else 0.0
-    gas_CO2_kg_per_year = gas_input_kwh * GAS_CO2_FACTOR_KG_PER_KWH
-    gas_CO2_tonnes_per_year = gas_CO2_kg_per_year / 1000.0
+    gas_co2_kg_per_year = gas_input_kwh * GAS_CO2_FACTOR_KG_PER_KWH
+    gas_co2_tonnes_per_year = gas_co2_kg_per_year / 1000.0
     gas_m3 = gas_input_kwh / kwh_per_m3 if kwh_per_m3 > 0 else 0.0
     cost_gas = gas_m3 * gas_price
 
     savings = cost_gas - cost_hp
     eff_cop = (Q_total / E_total_hp) if E_total_hp > 0 else 0.0
-
-    # NEW: Heat pump CO2 + CO2 saved
-    hp_CO2_kg_per_year = E_total_hp * grid_CO2_factor
-    hp_CO2_tonnes_per_year = hp_CO2_kg_per_year / 1000.0
-    CO2_saved_tonnes_per_year = gas_CO2_tonnes_per_year - hp_CO2_tonnes_per_year
 
     # checkpoint warning
     checkpoint = float(st.session_state.get("heat_checkpoint_cop", 0.0) or 0.0)
@@ -568,14 +557,15 @@ def run_heating():
             "Consider lowering seasonal COP or using conservative assumptions."
         )
 
+    project_name = (st.session_state.get("project_name") or "").strip()
+
     # Output
     st.divider()
-    k1, k2, k3, k4, k5 = st.columns(5)
+    k1, k2, k3, k4 = st.columns(4)
     k1.metric("Annual useful heat", f"{Q_total:,.0f} kWh_th")
-    k2.metric("Boosted share (>50°C)", f"{boosted_share_pct}%")
+    k2.metric("Boosted share (>50C)", f"{boosted_share_pct}%")
     k3.metric("Base seasonal COP used", f"{cop_base:.2f}")
-    k4.metric("Booster installed", "Yes" if booster_installed else "No")
-    k5.metric("CO2 saved", f"{CO2_saved_tonnes_per_year:,.1f} t/yr")
+    k4.metric("Boiler CO2 (baseline)", f"{gas_co2_tonnes_per_year:,.2f} tCO2/yr")
 
     t1, t2, t3 = st.tabs(["📊 Summary", "🧮 Details", "📄 Export"])
 
@@ -588,7 +578,7 @@ def run_heating():
         else:
             c.metric("Annual difference", f"{savings:,.0f} GEL")
             st.warning("HP system is more expensive than gas under these inputs.")
-        d.metric("CO2 saved", f"{CO2_saved_tonnes_per_year:,.1f} tCO2/yr")
+        d.metric("Boiler CO2 (baseline)", f"{gas_co2_tonnes_per_year:,.2f} tCO2/yr")
 
         fig = barh_chart(
             ["Gas Boiler", "HP System"],
@@ -615,50 +605,43 @@ def run_heating():
     with t2:
         st.write("### Split")
         st.write(f"- Space heating: **{sh_share_pct}%** → {Q_sh:,.0f} kWh_th")
-        st.write(f"- DHW: **{dhw_share_pct}%** → {Q_dhw:,.0f} kWh_th (target {dhw_target_c}°C)")
+        st.write(f"- DHW: **{dhw_share_pct}%** → {Q_dhw:,.0f} kWh_th (target {dhw_target_c}C)")
         st.write("### Boosting")
         st.write(f"- SH boosted fraction: **{sh_high_frac*100:.0f}%** → {Q_sh_high:,.0f} kWh_th")
         st.write(f"- DHW boosted fraction: **{dhw_high_frac*100:.0f}%** → {Q_dhw_high:,.0f} kWh_th")
         st.write(f"- Total boosted share: **{boosted_share_pct}%**")
-
-        st.divider()
-        st.write("### HP energy balance")
-        st.write("**Space heating chain**")
-        st.write(f"- Base electricity: **{chain_sh['E_base']:,.0f} kWh_el**")
-        st.write(f"- Booster electricity: **{chain_sh['E_boost']:,.0f} kWh_el**")
-        st.write(f"- Booster source heat from base: **{chain_sh['Q_source']:,.0f} kWh_th**")
-        st.write("**DHW chain**")
-        st.write(f"- Base electricity: **{chain_dhw['E_base']:,.0f} kWh_el**")
-        st.write(f"- Booster electricity: **{chain_dhw['E_boost']:,.0f} kWh_el**")
-        st.write(f"- Booster source heat from base: **{chain_dhw['Q_source']:,.0f} kWh_th**")
-
         st.divider()
         st.write("### Totals")
-        st.write(f"- Total electricity: **{E_total_hp:,.0f} kWh_el/year**")
+        st.write(f"- Total electricity (HP system): **{E_total_hp:,.0f} kWh_el/year**")
         st.write(f"- Effective system COP: **{eff_cop:.2f}**")
-        st.write(f"- Gas volume: **{gas_m3:,.0f} m³/year**")
-
+        st.write(f"- Gas volume (baseline): **{gas_m3:,.0f} m3/year**")
         st.divider()
-        st.write("### CO2 (simple)")
-        st.write(f"- Gas boiler CO2: **{gas_CO2_tonnes_per_year:,.2f} tCO2/year**")
-        st.write(f"- Heat pump CO2 (grid): **{hp_CO2_tonnes_per_year:,.2f} tCO2/year** (grid factor {grid_CO2_factor:.3f} kgCO2/kWh_el)")
-        st.write(f"- CO2 saved: **{CO2_saved_tonnes_per_year:,.2f} tCO2/year**")
+        st.write("### CO2 (boiler baseline only)")
+        st.write(f"- Gas boiler CO2: **{gas_co2_tonnes_per_year:,.2f} tCO2/year**")
 
     with t3:
-        pdf_lines = [
+        report_title = "HP vs Boiler Report"
+        if project_name:
+            report_title = f"{project_name} — {report_title}"
+
+        pdf_lines = []
+        if project_name:
+            pdf_lines.append(f"Project: {project_name}")
+            pdf_lines.append("")
+
+        pdf_lines += [
             f"Mode: {heat_mode} | {heat_application} | {heat_climate}",
             "",
             "Inputs:",
             f"- Annual useful heat: {Q_total:,.0f} kWh_th/year",
             f"- SH share: {sh_share_pct}% | DHW share: {dhw_share_pct}%",
-            f"- DHW target: {dhw_target_c}°C",
-            f"- Boosted share (>50°C): {boosted_share_pct}%",
+            f"- DHW target: {dhw_target_c}C",
+            f"- Boosted share (>50C): {boosted_share_pct}%",
             f"- Base seasonal COP used: {cop_base:.2f}",
             f"- Booster installed: {'Yes' if booster_installed else 'No'}" + (f" | Booster COP: {cop_boost:.2f}" if booster_installed else ""),
             f"- Electricity price: {el_price:.3f} GEL/kWh",
-            f"- Gas price: {gas_price:.2f} GEL/m³ | Gas energy: {kwh_per_m3:.1f} kWh/m³",
+            f"- Gas price: {gas_price:.2f} GEL/m3 | Gas energy: {kwh_per_m3:.1f} kWh/m3",
             f"- Boiler efficiency: {eta_boiler:.2f}",
-            f"- Grid CO2 factor: {grid_CO2_factor:.3f} kgCO2/kWh_el",
             "",
             "Results:",
             f"- Gas annual cost: {cost_gas:,.0f} GEL/year",
@@ -666,33 +649,36 @@ def run_heating():
             f"- Annual savings: {savings:,.0f} GEL/year",
             f"- Effective system COP: {eff_cop:.2f}",
             "",
-            "CO2:",
-            f"- Gas boiler CO2: {gas_CO2_tonnes_per_year:,.2f} tCO2/year",
-            f"- Heat pump CO2: {hp_CO2_tonnes_per_year:,.2f} tCO2/year",
-            f"- CO2 saved: {CO2_saved_tonnes_per_year:,.2f} tCO2/year",
+            "CO2 (boiler baseline only):",
+            f"- Gas boiler CO2: {gas_co2_tonnes_per_year:,.2f} tCO2/year",
         ]
-        pdf_bytes = build_pdf_report("HP vs Boiler Report", pdf_lines)
+
+        pdf_bytes = build_pdf_report(report_title, pdf_lines)
+        pdf_filename = f"hp_vs_boiler_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf"
+        if project_name:
+            safe_name = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in project_name).strip("_")
+            if safe_name:
+                pdf_filename = f"{safe_name}_hp_vs_boiler_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf"
+
         st.download_button(
             "📄 Download PDF report",
             data=pdf_bytes,
-            file_name=f"hp_vs_boiler_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
+            file_name=pdf_filename,
             mime="application/pdf",
             use_container_width=True,
         )
 
         df_export = pd.DataFrame(
             [
+                ("Project", "Project name", project_name),
                 ("Input", "Annual useful heat (kWh_th/year)", Q_total),
                 ("Input", "Boosted share (%)", boosted_share_pct),
                 ("Input", "Base COP used", cop_base),
                 ("Input", "Booster installed", booster_installed),
-                ("Input", "Grid CO2 factor (kgCO2/kWh_el)", grid_CO2_factor),
                 ("Result", "Cost gas (GEL/year)", cost_gas),
                 ("Result", "Cost HP (GEL/year)", cost_hp),
                 ("Result", "Savings (GEL/year)", savings),
-                ("Result", "Gas CO2 (tCO2/year)", gas_CO2_tonnes_per_year),
-                ("Result", "HP CO2 (tCO2/year)", hp_CO2_tonnes_per_year),
-                ("Result", "CO2 saved (tCO2/year)", CO2_saved_tonnes_per_year),
+                ("Result", "Gas CO2 (tCO2/year)", gas_co2_tonnes_per_year),
             ],
             columns=["Type", "Key", "Value"],
         )
@@ -709,10 +695,6 @@ def run_heating():
 # CHILLER MODULE
 # =========================================================
 def compute_setup_eff_and_capacity(setup: str) -> dict:
-    """
-    setup: 'a' or 'b'
-    Returns: dict with total_capacity_kw, weighted_eff, rows list
-    """
     rows = []
     cap_list = []
     eff_list = []
@@ -727,7 +709,6 @@ def compute_setup_eff_and_capacity(setup: str) -> dict:
         metric = st.session_state.get(f"ch_{setup}_metric_{i}", "SEER (recommended)")
 
         cap = qty * kw
-
         rows.append({"Line": i, "Qty": qty, "kW_each": kw, "Capacity_kW": cap, "Metric": metric, "Efficiency": eff})
 
         cap_list.append(cap)
@@ -735,7 +716,6 @@ def compute_setup_eff_and_capacity(setup: str) -> dict:
 
     total_cap = sum(cap_list)
     eff_weighted = harmonic_mean_weighted_by_capacity(cap_list, eff_list)
-
     return {"rows": rows, "total_cap_kw": total_cap, "eff_weighted": eff_weighted}
 
 
@@ -750,7 +730,6 @@ def run_chiller():
         "- Payback (optional) = extra CAPEX / savings"
     )
 
-    # Sidebar: electricity + demand method + setups
     with st.sidebar:
         st.header("Chiller Inputs")
         st.number_input("Electricity price (GEL/kWh)", min_value=0.001, value=0.30, step=0.01, format="%.3f", key="ch_el_price")
@@ -797,12 +776,7 @@ def run_chiller():
                 with cols[1]:
                     st.number_input("kW each", min_value=1.0, value=500.0, step=10.0, key=f"ch_a_kw_{i}")
                 with cols[2]:
-                    st.selectbox(
-                        "Metric",
-                        ["SEER (recommended)", "EER avg (fallback)"],
-                        index=0,
-                        key=f"ch_a_metric_{i}",
-                    )
+                    st.selectbox("Metric", ["SEER (recommended)", "EER avg (fallback)"], index=0, key=f"ch_a_metric_{i}")
                 with cols[3]:
                     st.number_input("Value", min_value=0.5, value=4.0, step=0.1, key=f"ch_a_eff_{i}")
 
@@ -817,12 +791,7 @@ def run_chiller():
                 with cols[1]:
                     st.number_input("kW each", min_value=1.0, value=500.0, step=10.0, key=f"ch_b_kw_{i}")
                 with cols[2]:
-                    st.selectbox(
-                        "Metric",
-                        ["SEER (recommended)", "EER avg (fallback)"],
-                        index=0,
-                        key=f"ch_b_metric_{i}",
-                    )
+                    st.selectbox("Metric", ["SEER (recommended)", "EER avg (fallback)"], index=0, key=f"ch_b_metric_{i}")
                 with cols[3]:
                     st.number_input("Value", min_value=0.5, value=4.5, step=0.1, key=f"ch_b_eff_{i}")
 
@@ -832,7 +801,6 @@ def run_chiller():
         st.number_input("CAPEX Setup A (GEL)", min_value=0.0, value=0.0, step=10_000.0, key="ch_capex_a")
         st.number_input("CAPEX Setup B (GEL)", min_value=0.0, value=0.0, step=10_000.0, key="ch_capex_b")
 
-    # Compute annual cooling demand
     dm = st.session_state.get("ch_demand_method", "Peak cooling load (kW) + EFLH (h/year)")
     if dm.startswith("Direct"):
         Q_cool = float(st.session_state.get("ch_q_cool_annual", 1_000_000.0))
@@ -847,12 +815,10 @@ def run_chiller():
         months = int(st.session_state.get("ch_months", 6))
         hours_day = float(st.session_state.get("ch_hours_per_day", 12.0))
         load_factor = float(st.session_state.get("ch_load_factor", 55)) / 100.0
-        # months × avg days/month (30.4) × hours/day × load_factor = EFLH equivalent
         eflh_equiv = months * 30.4 * hours_day * load_factor
         Q_cool = peak_kw * eflh_equiv
-        demand_note = f"Estimator: {months} mo, {hours_day} h/day, {load_factor*100:.0f}% load → EFLH~{eflh_equiv:,.0f} h"
+        demand_note = f"Estimator: {months} mo, {hours_day} h/day, {load_factor*100:.0f}% load -> EFLH~{eflh_equiv:,.0f} h"
 
-    # Setup efficiencies
     setup_a = compute_setup_eff_and_capacity("a")
     setup_b = compute_setup_eff_and_capacity("b")
 
@@ -904,7 +870,7 @@ def run_chiller():
         if st.session_state.get("ch_enable_payback", False):
             capex_a = float(st.session_state.get("ch_capex_a", 0.0))
             capex_b = float(st.session_state.get("ch_capex_b", 0.0))
-            delta_capex = capex_b - capex_a  # extra investment to go to B
+            delta_capex = capex_b - capex_a
             st.subheader("Payback (optional)")
             p1, p2, p3 = st.columns(3)
             p1.metric("Extra CAPEX (B − A)", f"{delta_capex:,.0f} GEL")
@@ -935,7 +901,17 @@ def run_chiller():
         )
 
     with t3:
-        pdf_lines = [
+        project_name = (st.session_state.get("project_name") or "").strip()
+        report_title = "Chiller Comparison Report"
+        if project_name:
+            report_title = f"{project_name} — {report_title}"
+
+        pdf_lines = []
+        if project_name:
+            pdf_lines.append(f"Project: {project_name}")
+            pdf_lines.append("")
+
+        pdf_lines += [
             f"Setup A: {label_a}",
             f"Setup B: {label_b}",
             "",
@@ -953,24 +929,32 @@ def run_chiller():
             f"- {label_b} annual cost: {cost_b:,.0f} GEL/year",
             f"- Savings (A − B): {savings:,.0f} GEL/year",
         ]
-        pdf_bytes = build_pdf_report("Chiller Comparison Report", pdf_lines)
+
+        pdf_bytes = build_pdf_report(report_title, pdf_lines)
+        pdf_filename = f"chiller_comparison_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf"
+        if project_name:
+            safe_name = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in project_name).strip("_")
+            if safe_name:
+                pdf_filename = f"{safe_name}_chiller_comparison_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf"
+
         st.download_button(
             "📄 Download PDF report",
             data=pdf_bytes,
-            file_name=f"chiller_comparison_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
+            file_name=pdf_filename,
             mime="application/pdf",
             use_container_width=True,
         )
 
-        export_rows = []
-        export_rows.append(("Input", "Annual cooling demand (kWh_cool/year)", Q_cool))
-        export_rows.append(("Input", "Electricity price (GEL/kWh)", el_price))
-        export_rows.append(("SetupA", "Weighted efficiency", eff_a))
-        export_rows.append(("SetupA", "Annual cost (GEL/year)", cost_a))
-        export_rows.append(("SetupB", "Weighted efficiency", eff_b))
-        export_rows.append(("SetupB", "Annual cost (GEL/year)", cost_b))
-        export_rows.append(("Result", "Savings (A − B) (GEL/year)", savings))
-
+        export_rows = [
+            ("Project", "Project name", project_name),
+            ("Input", "Annual cooling demand (kWh_cool/year)", Q_cool),
+            ("Input", "Electricity price (GEL/kWh)", el_price),
+            ("SetupA", "Weighted efficiency", eff_a),
+            ("SetupA", "Annual cost (GEL/year)", cost_a),
+            ("SetupB", "Weighted efficiency", eff_b),
+            ("SetupB", "Annual cost (GEL/year)", cost_b),
+            ("Result", "Savings (A − B) (GEL/year)", savings),
+        ]
         df_export = pd.DataFrame(export_rows, columns=["Type", "Key", "Value"])
         st.download_button(
             "⬇️ Download CSV",
@@ -988,4 +972,5 @@ if tool == "Heat Pump vs Boiler":
     run_heating()
 else:
     run_chiller()
+
 
