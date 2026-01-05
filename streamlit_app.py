@@ -22,7 +22,7 @@ st.set_page_config(
 )
 
 APP_TITLE = "Treimax Energy Tools"
-APP_VER = "V7 (HP vs Boiler + Chiller Options + Save/Load JSON)"
+APP_VER = "V8 (Adds CO₂ saved: Gas Boiler → Heat Pump + Save/Load JSON)"
 
 
 # =========================================================
@@ -143,6 +143,8 @@ PROJECT_KEYS = [
     "heat_checkpoint_cop",
     "heat_booster_installed",
     "heat_cop_boost",
+    "heat_grid_co2_factor",  # NEW: kgCO2/kWh_el
+
     "heat_enable_payback",
     "heat_capex_hp",
     "heat_capex_boiler",
@@ -252,6 +254,8 @@ with st.sidebar:
 # =========================================================
 HP_MAX_SUPPLY_C = 50
 GAS_CO2_FACTOR_KG_PER_KWH = 0.202  # kgCO2 per kWh_gas (combustion only)
+GRID_CO2_FACTOR_DEFAULT = 0.35     # NEW: kgCO2 per kWh_el (adjust as needed)
+
 BUILDING_TYPES = ["Office", "Hotel", "Hospital"]
 INSULATION_LEVELS = ["Poor / Old", "Standard", "Good / New", "High-performance"]
 CLIMATES = ["Tbilisi", "Batumi", "Gudauri"]
@@ -300,7 +304,8 @@ def run_heating():
         f"- Base HP max supply temperature = {HP_MAX_SUPPLY_C}°C\n"
         "- Any demand requiring >50°C must be boosted (if booster installed)\n"
         "- Booster COP is constant\n"
-        "- Gas baseline uses seasonal boiler efficiency and gas price"
+        "- Gas baseline uses seasonal boiler efficiency and gas price\n"
+        "- CO₂ saved = Gas boiler CO₂ − Heat pump CO₂ (HP CO₂ uses grid factor)"
     )
 
     # Sidebar inputs
@@ -318,10 +323,25 @@ def run_heating():
 
         st.divider()
         st.subheader("Prices")
-        st.number_input("Electricity price (GEL/kWh)", min_value=0.001, value=0.30, step=0.01, format="%.3f", key="heat_el_price")
+        st.number_input(
+            "Electricity price (GEL/kWh)",
+            min_value=0.001, value=0.30, step=0.01, format="%.3f",
+            key="heat_el_price"
+        )
         st.number_input("Gas price (GEL/m³)", min_value=0.01, value=1.29, step=0.01, key="heat_gas_price")
         with st.expander("Advanced: Gas conversion", expanded=False):
             st.number_input("Gas energy content (kWh/m³)", min_value=5.0, max_value=15.0, value=10.0, step=0.1, key="heat_kwh_per_m3")
+
+        with st.expander("Advanced: CO₂ factors", expanded=False):
+            st.number_input(
+                "Grid CO₂ factor (kgCO₂/kWh_el)",
+                min_value=0.0,
+                value=float(st.session_state.get("heat_grid_co2_factor", GRID_CO2_FACTOR_DEFAULT)),
+                step=0.01,
+                format="%.3f",
+                key="heat_grid_co2_factor",
+            )
+            st.caption("Used to compute Heat Pump CO₂. CO₂ saved = Gas − HP.")
 
         st.divider()
         st.subheader("Boiler baseline")
@@ -518,6 +538,7 @@ def run_heating():
     gas_price = float(st.session_state.get("heat_gas_price", 1.29))
     kwh_per_m3 = float(st.session_state.get("heat_kwh_per_m3", 10.0))
     eta_boiler = float(st.session_state.get("heat_eta_boiler", 0.93))
+    grid_co2_factor = float(st.session_state.get("heat_grid_co2_factor", GRID_CO2_FACTOR_DEFAULT))
 
     chain_sh = hp_booster_chain(Q_sh_low, Q_sh_high, cop_base, cop_boost)
     chain_dhw = hp_booster_chain(Q_dhw_low, Q_dhw_high, cop_base, cop_boost)
@@ -534,6 +555,11 @@ def run_heating():
     savings = cost_gas - cost_hp
     eff_cop = (Q_total / E_total_hp) if E_total_hp > 0 else 0.0
 
+    # NEW: Heat pump CO2 + CO2 saved
+    hp_co2_kg_per_year = E_total_hp * grid_co2_factor
+    hp_co2_tonnes_per_year = hp_co2_kg_per_year / 1000.0
+    co2_saved_tonnes_per_year = gas_co2_tonnes_per_year - hp_co2_tonnes_per_year
+
     # checkpoint warning
     checkpoint = float(st.session_state.get("heat_checkpoint_cop", 0.0) or 0.0)
     if checkpoint > 0 and cop_base > checkpoint * 1.6:
@@ -544,16 +570,17 @@ def run_heating():
 
     # Output
     st.divider()
-    k1, k2, k3, k4 = st.columns(4)
+    k1, k2, k3, k4, k5 = st.columns(5)
     k1.metric("Annual useful heat", f"{Q_total:,.0f} kWh_th")
     k2.metric("Boosted share (>50°C)", f"{boosted_share_pct}%")
     k3.metric("Base seasonal COP used", f"{cop_base:.2f}")
     k4.metric("Booster installed", "Yes" if booster_installed else "No")
+    k5.metric("CO₂ saved", f"{co2_saved_tonnes_per_year:,.1f} t/yr")
 
     t1, t2, t3 = st.tabs(["📊 Summary", "🧮 Details", "📄 Export"])
 
     with t1:
-        a, b, c = st.columns(3)
+        a, b, c, d = st.columns(4)
         a.metric("Annual cost (Boiler)", f"{cost_gas:,.0f} GEL")
         b.metric("Annual cost (HP system)", f"{cost_hp:,.0f} GEL")
         if savings >= 0:
@@ -561,6 +588,7 @@ def run_heating():
         else:
             c.metric("Annual difference", f"{savings:,.0f} GEL")
             st.warning("HP system is more expensive than gas under these inputs.")
+        d.metric("CO₂ saved", f"{co2_saved_tonnes_per_year:,.1f} tCO₂/yr")
 
         fig = barh_chart(
             ["Gas Boiler", "HP System"],
@@ -592,6 +620,7 @@ def run_heating():
         st.write(f"- SH boosted fraction: **{sh_high_frac*100:.0f}%** → {Q_sh_high:,.0f} kWh_th")
         st.write(f"- DHW boosted fraction: **{dhw_high_frac*100:.0f}%** → {Q_dhw_high:,.0f} kWh_th")
         st.write(f"- Total boosted share: **{boosted_share_pct}%**")
+
         st.divider()
         st.write("### HP energy balance")
         st.write("**Space heating chain**")
@@ -602,11 +631,18 @@ def run_heating():
         st.write(f"- Base electricity: **{chain_dhw['E_base']:,.0f} kWh_el**")
         st.write(f"- Booster electricity: **{chain_dhw['E_boost']:,.0f} kWh_el**")
         st.write(f"- Booster source heat from base: **{chain_dhw['Q_source']:,.0f} kWh_th**")
+
         st.divider()
         st.write("### Totals")
         st.write(f"- Total electricity: **{E_total_hp:,.0f} kWh_el/year**")
         st.write(f"- Effective system COP: **{eff_cop:.2f}**")
         st.write(f"- Gas volume: **{gas_m3:,.0f} m³/year**")
+
+        st.divider()
+        st.write("### CO₂ (simple)")
+        st.write(f"- Gas boiler CO₂: **{gas_co2_tonnes_per_year:,.2f} tCO₂/year**")
+        st.write(f"- Heat pump CO₂ (grid): **{hp_co2_tonnes_per_year:,.2f} tCO₂/year** (grid factor {grid_co2_factor:.3f} kgCO₂/kWh_el)")
+        st.write(f"- CO₂ saved: **{co2_saved_tonnes_per_year:,.2f} tCO₂/year**")
 
     with t3:
         pdf_lines = [
@@ -622,12 +658,18 @@ def run_heating():
             f"- Electricity price: {el_price:.3f} GEL/kWh",
             f"- Gas price: {gas_price:.2f} GEL/m³ | Gas energy: {kwh_per_m3:.1f} kWh/m³",
             f"- Boiler efficiency: {eta_boiler:.2f}",
+            f"- Grid CO₂ factor: {grid_co2_factor:.3f} kgCO₂/kWh_el",
             "",
             "Results:",
             f"- Gas annual cost: {cost_gas:,.0f} GEL/year",
             f"- HP annual cost: {cost_hp:,.0f} GEL/year",
             f"- Annual savings: {savings:,.0f} GEL/year",
             f"- Effective system COP: {eff_cop:.2f}",
+            "",
+            "CO₂:",
+            f"- Gas boiler CO₂: {gas_co2_tonnes_per_year:,.2f} tCO₂/year",
+            f"- Heat pump CO₂: {hp_co2_tonnes_per_year:,.2f} tCO₂/year",
+            f"- CO₂ saved: {co2_saved_tonnes_per_year:,.2f} tCO₂/year",
         ]
         pdf_bytes = build_pdf_report("HP vs Boiler Report", pdf_lines)
         st.download_button(
@@ -644,9 +686,13 @@ def run_heating():
                 ("Input", "Boosted share (%)", boosted_share_pct),
                 ("Input", "Base COP used", cop_base),
                 ("Input", "Booster installed", booster_installed),
+                ("Input", "Grid CO2 factor (kgCO2/kWh_el)", grid_co2_factor),
                 ("Result", "Cost gas (GEL/year)", cost_gas),
                 ("Result", "Cost HP (GEL/year)", cost_hp),
                 ("Result", "Savings (GEL/year)", savings),
+                ("Result", "Gas CO2 (tCO2/year)", gas_co2_tonnes_per_year),
+                ("Result", "HP CO2 (tCO2/year)", hp_co2_tonnes_per_year),
+                ("Result", "CO2 saved (tCO2/year)", co2_saved_tonnes_per_year),
             ],
             columns=["Type", "Key", "Value"],
         )
@@ -942,3 +988,4 @@ if tool == "Heat Pump vs Boiler":
     run_heating()
 else:
     run_chiller()
+
