@@ -251,7 +251,7 @@ with st.sidebar:
 # HEATING MODULE CONSTANTS
 # =========================================================
 HP_MAX_SUPPLY_C = 50
-
+GAS_CO2_FACTOR_KG_PER_KWH = 0.202  # kgCO2 per kWh_gas (combustion only)
 BUILDING_TYPES = ["Office", "Hotel", "Hospital"]
 INSULATION_LEVELS = ["Poor / Old", "Standard", "Good / New", "High-performance"]
 CLIMATES = ["Tbilisi", "Batumi", "Gudauri"]
@@ -526,6 +526,8 @@ def run_heating():
     cost_hp = E_total_hp * el_price
 
     gas_input_kwh = Q_total / eta_boiler if eta_boiler > 0 else 0.0
+    gas_co2_kg_per_year = gas_input_kwh * GAS_CO2_FACTOR_KG_PER_KWH
+    gas_co2_tonnes_per_year = gas_co2_kg_per_year / 1000.0
     gas_m3 = gas_input_kwh / kwh_per_m3 if kwh_per_m3 > 0 else 0.0
     cost_gas = gas_m3 * gas_price
 
