@@ -23,8 +23,8 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-APP_TITLE = "Treimax Energy Tools"
-APP_VER = "V11.2 (Richer PDF presets + Charts — NO Logo)"
+APP_TITLE = "Treimax-Georgia Energy Tools"
+APP_VER = "V11.2 (Treimax App)"
 
 
 # =========================================================
