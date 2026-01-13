@@ -120,6 +120,7 @@ def harmonic_mean_weighted_by_capacity(cap_list, eff_list):
 
 # =========================================================
 # Rich PDF Builder (Treimax Georgia, no logo)
+# FIXED: nonlocal y binding + KPI overlap + indentation
 # =========================================================
 def build_rich_pdf_report(
     report_title: str,
@@ -144,18 +145,21 @@ def build_rich_pdf_report(
     margin_b = 1.4 * cm
     usable_w = W - margin_l - margin_r
 
-    # ---- FIX: bind y in this scope so nonlocal y works ----
     page_num = 0
-    y = 0  # <--- important: creates the binding for nonlocal 'y'
 
-    def new_page():
-        nonlocal page_num, y
-        if page_num > 0:
-            draw_footer()
-            c.showPage()
-        page_num += 1
-        y = H - margin_t
-        draw_header()
+    # IMPORTANT FIX: define y in outer scope so nonlocal works
+    y = H - margin_t
+
+    def draw_footer():
+        c.setFont("Helvetica", 8)
+        c.setFillColor(colors.grey)
+        left = margin_l
+        right = W - margin_r
+        c.drawString(left, margin_b - 0.6 * cm, f"{APP_TITLE} — {APP_VER}")
+        c.drawRightString(right, margin_b - 0.6 * cm, f"Page {page_num}")
+        if footer_note:
+            c.drawString(left, margin_b - 1.0 * cm, footer_note)
+        c.setFillColor(colors.black)
 
     def draw_header():
         nonlocal y
@@ -185,16 +189,14 @@ def build_rich_pdf_report(
         c.setStrokeColor(colors.black)
         y -= 0.6 * cm
 
-    def draw_footer():
-        c.setFont("Helvetica", 8)
-        c.setFillColor(colors.grey)
-        left = margin_l
-        right = W - margin_r
-        c.drawString(left, margin_b - 0.6 * cm, f"{APP_TITLE} — {APP_VER}")
-        c.drawRightString(right, margin_b - 0.6 * cm, f"Page {page_num}")
-        if footer_note:
-            c.drawString(left, margin_b - 1.0 * cm, footer_note)
-        c.setFillColor(colors.black)
+    def new_page():
+        nonlocal page_num, y
+        if page_num > 0:
+            draw_footer()
+            c.showPage()
+        page_num += 1
+        y = H - margin_t
+        draw_header()
 
     def ensure_space(h_needed):
         nonlocal y
@@ -212,8 +214,9 @@ def build_rich_pdf_report(
         c.line(margin_l, y, W - margin_r, y)
         c.setStrokeColor(colors.black)
         y -= 0.45 * cm
-        
- def draw_kpi(items):
+
+    # FIXED KPI: dynamic height (no overlap)
+    def draw_kpi(items):
         nonlocal y
         import math
 
@@ -221,7 +224,6 @@ def build_rich_pdf_report(
         n = len(items)
         rows = max(1, math.ceil(n / cols))
 
-        # Dynamic sizing (prevents overlap)
         row_h = 1.05 * cm
         pad_top = 0.25 * cm
         pad_bottom = 0.25 * cm
@@ -233,7 +235,6 @@ def build_rich_pdf_report(
         y_top = y
         y0 = y_top - box_h
 
-        # Background
         c.setStrokeColor(colors.lightgrey)
         c.setFillColor(colors.whitesmoke)
         c.rect(x0, y0, usable_w, box_h, fill=1, stroke=1)
@@ -243,7 +244,6 @@ def build_rich_pdf_report(
         for idx, (lab, val) in enumerate(items):
             r = idx // cols
             col = idx % cols
-
             xx = x0 + col * col_w + 0.35 * cm
 
             row_top = y_top - pad_top - r * row_h
@@ -260,15 +260,15 @@ def build_rich_pdf_report(
 
         c.setFillColor(colors.black)
         c.setStrokeColor(colors.black)
-
         y = y0 - 0.55 * cm
-
 
     def draw_table(columns, rows, col_widths=None):
         nonlocal y
-        # Basic table with light borders
+        if not columns:
+            return
         if col_widths is None:
             col_widths = [usable_w / len(columns)] * len(columns)
+
         row_h = 0.55 * cm
         header_h = 0.65 * cm
         table_h = header_h + row_h * max(1, len(rows))
@@ -277,19 +277,16 @@ def build_rich_pdf_report(
         x = margin_l
         y_top = y
 
-        # Header background
         c.setFillColor(colors.lightgrey)
         c.rect(x, y_top - header_h, usable_w, header_h, fill=1, stroke=0)
         c.setFillColor(colors.black)
 
-        # Header text
         c.setFont("Helvetica-Bold", 9)
         xx = x
         for i, col in enumerate(columns):
             c.drawString(xx + 0.15 * cm, y_top - 0.45 * cm, str(col))
             xx += col_widths[i]
 
-        # Grid + rows
         c.setStrokeColor(colors.lightgrey)
         y_cursor = y_top - header_h
         c.line(x, y_cursor, x + usable_w, y_cursor)
@@ -303,20 +300,17 @@ def build_rich_pdf_report(
                 xx += col_widths[i]
             c.line(x, y_cursor, x + usable_w, y_cursor)
 
-        # Vertical lines
         xx = x
         c.line(xx, y_top, xx, y_cursor)
         for w in col_widths:
             xx += w
             c.line(xx, y_top, xx, y_cursor)
 
-        # Outer border
         c.setStrokeColor(colors.lightgrey)
         c.rect(x, y_cursor, usable_w, (y_top - y_cursor), fill=0, stroke=1)
         c.setStrokeColor(colors.black)
 
         y = y_cursor - 0.55 * cm
-
 
     def draw_text(lines):
         nonlocal y
@@ -327,7 +321,6 @@ def build_rich_pdf_report(
             c.drawString(margin_l, y, safe)
             y -= 0.48 * cm
         y -= 0.2 * cm
-
 
     def draw_image(img: ImageReader, w_cm=16, h_cm=7):
         nonlocal y
@@ -340,6 +333,30 @@ def build_rich_pdf_report(
         c.drawImage(img, x, y - h, width=min(w, usable_w), height=h, preserveAspectRatio=True, anchor="sw")
         c.setStrokeColor(colors.black)
         y -= (h + 0.55 * cm)
+
+    # Start first page
+    new_page()
+
+    for sec in sections:
+        stype = sec.get("type")
+        title = sec.get("title", "")
+        if title:
+            draw_section_title(title)
+
+        if stype == "kpi":
+            draw_kpi(sec.get("items", []))
+        elif stype == "table":
+            draw_table(sec.get("columns", []), sec.get("rows", []), sec.get("col_widths"))
+        elif stype == "text":
+            draw_text(sec.get("lines", []))
+        elif stype == "image":
+            draw_image(sec.get("image"), sec.get("w_cm", 16), sec.get("h_cm", 7))
+
+    draw_footer()
+    c.showPage()
+    c.save()
+    return buf.getvalue()
+
 
 # =========================================================
 # Save/Load JSON (no DB)
@@ -391,7 +408,7 @@ PROJECT_KEYS = [
     "heat_mixed_systems",
     "heat_sh_high_frac_pct",
 
-    # CHILLER (unchanged)
+    # CHILLER
     "ch_el_price",
     "ch_demand_method",
     "ch_q_cool_annual",
@@ -651,7 +668,11 @@ def run_heating():
                     st.number_input("COP at -3°C (≤50°C supply)", min_value=0.1, value=2.6, step=0.05, key="heat_base_cop_m3")
                     st.number_input("COP at +2°C (≤50°C supply)", min_value=0.1, value=2.8, step=0.05, key="heat_base_cop_p2")
                     st.number_input("COP at +7°C (≤50°C supply)", min_value=0.1, value=3.0, step=0.05, key="heat_base_cop_p7")
-                    pts = {-3: st.session_state["heat_base_cop_m3"], 2: st.session_state["heat_base_cop_p2"], 7: st.session_state["heat_base_cop_p7"]}
+                    pts = {
+                        -3: st.session_state["heat_base_cop_m3"],
+                        2: st.session_state["heat_base_cop_p2"],
+                        7: st.session_state["heat_base_cop_p7"],
+                    }
                     cop_base = weighted_avg(pts, SH_WEIGHTS_3[heat_climate])
                     st.caption(f"Derived seasonal COP (weighted by climate): {cop_base:.2f}")
             else:
@@ -662,7 +683,11 @@ def run_heating():
                     st.number_input("COP at -3°C (≤50°C supply)", min_value=0.1, value=2.6, step=0.05, key="heat_base_cop_m3")
                     st.number_input("COP at +2°C (≤50°C supply)", min_value=0.1, value=2.8, step=0.05, key="heat_base_cop_p2")
                     st.number_input("COP at +7°C (≤50°C supply)", min_value=0.1, value=3.0, step=0.05, key="heat_base_cop_p7")
-                    pts = {-3: st.session_state["heat_base_cop_m3"], 2: st.session_state["heat_base_cop_p2"], 7: st.session_state["heat_base_cop_p7"]}
+                    pts = {
+                        -3: st.session_state["heat_base_cop_m3"],
+                        2: st.session_state["heat_base_cop_p2"],
+                        7: st.session_state["heat_base_cop_p7"],
+                    }
                     cop_base = weighted_avg(pts, SH_WEIGHTS_3[heat_climate])
                     st.caption(f"Derived seasonal COP (weighted by climate): {cop_base:.2f}")
 
@@ -908,17 +933,21 @@ def run_heating():
         if st.session_state.get("heat_cop_method_scop") == "Use SCOP directly":
             cop_base = float(st.session_state.get("heat_scop", 3.78))
         else:
-            pts = {-3: float(st.session_state.get("heat_base_cop_m3", 2.6)),
-                   2: float(st.session_state.get("heat_base_cop_p2", 2.8)),
-                   7: float(st.session_state.get("heat_base_cop_p7", 3.0))}
+            pts = {
+                -3: float(st.session_state.get("heat_base_cop_m3", 2.6)),
+                2: float(st.session_state.get("heat_base_cop_p2", 2.8)),
+                7: float(st.session_state.get("heat_base_cop_p7", 3.0)),
+            }
             cop_base = weighted_avg(pts, SH_WEIGHTS_3[heat_climate])
     else:
         if st.session_state.get("heat_cop_method_manual", "Single seasonal COP") == "Single seasonal COP":
             cop_base = float(st.session_state.get("heat_cop_base_manual", 2.8))
         else:
-            pts = {-3: float(st.session_state.get("heat_base_cop_m3", 2.6)),
-                   2: float(st.session_state.get("heat_base_cop_p2", 2.8)),
-                   7: float(st.session_state.get("heat_base_cop_p7", 3.0))}
+            pts = {
+                -3: float(st.session_state.get("heat_base_cop_m3", 2.6)),
+                2: float(st.session_state.get("heat_base_cop_p2", 2.8)),
+                7: float(st.session_state.get("heat_base_cop_p7", 3.0)),
+            }
             cop_base = weighted_avg(pts, SH_WEIGHTS_3[heat_climate])
 
     # =====================================================
@@ -1009,7 +1038,7 @@ def run_heating():
             st.write(f"- Gas price: **{gas_price:.2f} GEL/m³**")
             st.write(f"- Boiler efficiency η: **{eta_boiler:.2f}**")
             st.write(f"- Seasonal COP (≤50°C supply): **{cop_base:.2f}**")
-            st.write(f"- Booster installed: **{'Yes' if booster_installed else 'No'}" + (f" (COP {cop_boost:.2f})" if booster_installed else ""))
+            st.write(f"- Booster installed: **{'Yes' if booster_installed else 'No'}**" + (f" (COP {cop_boost:.2f})" if booster_installed else ""))
             st.write(f"- Boosted share (>50°C): **{boosted_share_pct}%**")
             if gas_method_active:
                 st.write(f"- Gas baseline from bills: **{gas_m3:,.0f} m³/year**")
@@ -1157,7 +1186,6 @@ def run_heating():
             ("CO2 baseline (gas)", f"{gas_co2_tonnes_per_year:,.2f} tCO2/yr"),
         ]
         sections.append({"type": "kpi", "title": "Executive Summary", "items": kpis})
-
         sections.append({"type": "text", "title": "Summary", "lines": [narrative]})
 
         inputs_rows = [
@@ -1321,7 +1349,7 @@ def run_heating():
 
 
 # =========================================================
-# CHILLER MODULE (unchanged)
+# CHILLER MODULE
 # =========================================================
 def compute_setup_eff_and_capacity(setup: str) -> dict:
     rows = []
@@ -1596,4 +1624,3 @@ if tool == "Heat Pump vs Boiler":
     run_heating()
 else:
     run_chiller()
-
