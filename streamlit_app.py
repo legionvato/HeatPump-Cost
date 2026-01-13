@@ -214,40 +214,57 @@ def build_rich_pdf_report(
         y -= 0.45 * cm
 
     def draw_kpi(items):
-        nonlocal y
-        # items: list[(label, value)]
-        # simple 2-column KPI grid
-        box_h = 2.2 * cm
-        ensure_space(box_h + 0.3 * cm)
-        x0 = margin_l
-        y0 = y - box_h
-        c.setStrokeColor(colors.lightgrey)
-        c.setFillColor(colors.whitesmoke)
-        c.rect(x0, y0, usable_w, box_h, fill=1, stroke=1)
+        
+def draw_kpi(items):
+    nonlocal y
+
+    import math
+
+    cols = 2
+    n = len(items)
+    rows = max(1, math.ceil(n / cols))
+
+    # Dynamic sizing (prevents overlap)
+    row_h = 1.05 * cm
+    pad_top = 0.25 * cm
+    pad_bottom = 0.25 * cm
+    box_h = rows * row_h + pad_top + pad_bottom
+
+    ensure_space(box_h + 0.35 * cm)
+
+    x0 = margin_l
+    y_top = y
+    y0 = y_top - box_h
+
+    # Background
+    c.setStrokeColor(colors.lightgrey)
+    c.setFillColor(colors.whitesmoke)
+    c.rect(x0, y0, usable_w, box_h, fill=1, stroke=1)
+
+    col_w = usable_w / cols
+
+    for idx, (lab, val) in enumerate(items):
+        r = idx // cols
+        col = idx % cols
+
+        xx = x0 + col * col_w + 0.35 * cm
+
+        row_top = y_top - pad_top - r * row_h
+        label_y = row_top - 0.35 * cm
+        value_y = row_top - 0.80 * cm
+
+        c.setFont("Helvetica", 8)
+        c.setFillColor(colors.grey)
+        c.drawString(xx, label_y, str(lab))
+
+        c.setFont("Helvetica-Bold", 11)
         c.setFillColor(colors.black)
-        c.setStrokeColor(colors.black)
+        c.drawString(xx, value_y, str(val))
 
-        cols = 2
-        rows = (len(items) + 1) // 2
-        col_w = usable_w / cols
-        row_h = box_h / max(1, rows)
+    c.setFillColor(colors.black)
+    c.setStrokeColor(colors.black)
 
-        for idx, (lab, val) in enumerate(items):
-            r = idx // cols
-            col = idx % cols
-            xx = x0 + col * col_w + 0.35 * cm
-            yy = y - (r + 1) * row_h + 0.9 * cm
-
-            c.setFont("Helvetica", 8)
-            c.setFillColor(colors.grey)
-            c.drawString(xx, yy + 0.35 * cm, str(lab))
-
-            c.setFont("Helvetica-Bold", 11)
-            c.setFillColor(colors.black)
-            c.drawString(xx, yy - 0.05 * cm, str(val))
-
-        y = y0 - 0.55 * cm
-
+    y = y0 - 0.55 * cm
     def draw_table(columns, rows, col_widths=None):
         nonlocal y
         # Basic table with light borders
