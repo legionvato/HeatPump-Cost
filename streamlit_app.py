@@ -144,7 +144,9 @@ def build_rich_pdf_report(
     margin_b = 1.4 * cm
     usable_w = W - margin_l - margin_r
 
+    # ---- FIX: bind y in this scope so nonlocal y works ----
     page_num = 0
+    y = 0  # <--- important: creates the binding for nonlocal 'y'
 
     def new_page():
         nonlocal page_num, y
@@ -1013,7 +1015,7 @@ def run_heating():
             st.write(f"- Gas price: **{gas_price:.2f} GEL/m³**")
             st.write(f"- Boiler efficiency η: **{eta_boiler:.2f}**")
             st.write(f"- Seasonal COP (≤50°C supply): **{cop_base:.2f}**")
-            st.write(f"- Booster installed: **{'Yes' if booster_installed else 'No'}**" + (f" (COP {cop_boost:.2f})" if booster_installed else ""))
+            st.write(f"- Booster installed: **{'Yes' if booster_installed else 'No'}" + (f" (COP {cop_boost:.2f})" if booster_installed else ""))
             st.write(f"- Boosted share (>50°C): **{boosted_share_pct}%**")
             if gas_method_active:
                 st.write(f"- Gas baseline from bills: **{gas_m3:,.0f} m³/year**")
@@ -1063,7 +1065,7 @@ def run_heating():
         st.write(f"- Gas boiler CO2: **{gas_co2_tonnes_per_year:,.2f} tCO2/year**")
 
     # =====================================================
-    # Export tab (NEW: report presets + richer PDF)
+    # Export tab
     # =====================================================
     with t3:
         st.markdown("### Report preset (select what you need)")
@@ -1074,7 +1076,6 @@ def run_heating():
             horizontal=True,
         )
 
-        # Build a richer report based on preset
         report_title = "Heat Pump vs Gas Boiler — Report"
         if project_name:
             report_title = f"{project_name} — Heat Pump vs Gas Boiler"
@@ -1085,9 +1086,7 @@ def run_heating():
         else:
             subtitle += " | Mode: Scratch estimate"
 
-        # Common values for report content
         pct_savings = (savings / cost_gas * 100.0) if cost_gas > 0 else 0.0
-        narrative = ""
         if cost_gas > 0:
             if savings >= 0:
                 narrative = (
@@ -1102,7 +1101,6 @@ def run_heating():
         else:
             narrative = "Could not compute % savings (gas baseline cost is zero or undefined)."
 
-        # Charts (create ImageReaders)
         img_cost = fig_to_imagereader(
             barh_chart(
                 ["Gas Boiler", "HP System"],
@@ -1129,7 +1127,6 @@ def run_heating():
             )
         )
 
-        # HP breakdown costs for stacked bar (base vs booster)
         E_base_total = chain_sh["E_base"] + chain_dhw["E_base"]
         E_boost_total = chain_sh["E_boost"] + chain_dhw["E_boost"]
         cost_hp_base = E_base_total * el_price
@@ -1138,18 +1135,13 @@ def run_heating():
             stacked_bar_cost_hp(cost_gas, cost_hp_base, cost_hp_boost)
         )
 
-        # Sensitivity (financial focus only): fixed +20% electricity, +20% gas
         sens_rows = []
         if preset == "Financial Focus":
             el_up = el_price * 1.20
             gas_up = gas_price * 1.20
-            # keep energies same; only prices change
             base_sav = cost_gas - cost_hp
             sav_el_up = cost_gas - (E_total_hp * el_up)
-            if gas_method_active:
-                cost_gas_gasup = gas_m3 * gas_up
-            else:
-                cost_gas_gasup = gas_m3 * gas_up
+            cost_gas_gasup = gas_m3 * gas_up
             sav_gas_up = cost_gas_gasup - cost_hp
 
             sens_rows = [
@@ -1158,10 +1150,8 @@ def run_heating():
                 ["Gas +20%", f"{el_price:.3f}", f"{gas_up:.2f}", f"{sav_gas_up:,.0f}"],
             ]
 
-        # Sections per preset (no extra option checkboxes)
         sections = []
 
-        # Executive KPIs (always)
         kpis = [
             ("Annual useful heat", f"{Q_total:,.0f} kWh_th/yr"),
             ("Annual cost (Gas)", f"{cost_gas:,.0f} GEL"),
@@ -1174,10 +1164,8 @@ def run_heating():
         ]
         sections.append({"type": "kpi", "title": "Executive Summary", "items": kpis})
 
-        # Narrative
         sections.append({"type": "text", "title": "Summary", "lines": [narrative]})
 
-        # Inputs snapshot (compact)
         inputs_rows = [
             ["Electricity price (GEL/kWh)", f"{el_price:.3f}"],
             ["Gas price (GEL/m³)", f"{gas_price:.2f}"],
@@ -1201,7 +1189,6 @@ def run_heating():
             {"type": "table", "title": "Inputs (snapshot)", "columns": ["Item", "Value"], "rows": inputs_rows}
         )
 
-        # Charts selection by preset (fixed)
         if preset in ["Client One-Pager", "Sales Proposal", "Financial Focus"]:
             sections.append({"type": "image", "title": "Annual cost comparison", "image": img_cost, "w_cm": 16, "h_cm": 6.5})
 
@@ -1209,11 +1196,9 @@ def run_heating():
             sections.append({"type": "image", "title": "Heat demand split", "image": img_pie_split, "w_cm": 15, "h_cm": 7})
 
         if preset == "Sales Proposal":
-            # show boosted share pie (useful for mixed/high-temp narrative)
             if boosted_share_pct > 0:
                 sections.append({"type": "image", "title": "Boosted share", "image": img_pie_boost, "w_cm": 15, "h_cm": 7})
 
-            # Next steps checklist
             sections.append(
                 {
                     "type": "text",
@@ -1249,7 +1234,6 @@ def run_heating():
             )
 
         if preset == "Technical (with Appendix)":
-            # Technical report uses stacked cost breakdown and more calculations
             sections.append({"type": "image", "title": "Annual cost comparison (HP breakdown)", "image": img_cost_stacked, "w_cm": 16, "h_cm": 7})
 
             tech_rows = [
@@ -1282,7 +1266,6 @@ def run_heating():
                 }
             )
 
-        # Always include a short assumptions note at the end (compact)
         sections.append(
             {
                 "type": "text",
@@ -1315,7 +1298,6 @@ def run_heating():
             use_container_width=True,
         )
 
-        # CSV export (unchanged, still useful)
         df_export = pd.DataFrame(
             [
                 ("Project", "Project name", project_name),
@@ -1554,24 +1536,6 @@ def run_chiller():
         if project_name:
             report_title = f"{project_name} — Chiller Comparison"
 
-        pdf_lines = [
-            f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
-            f"Setup A: {label_a}",
-            f"Setup B: {label_b}",
-            "",
-            f"Annual cooling demand: {Q_cool:,.0f} kWh_cool/year",
-            f"Demand method: {demand_note}",
-            f"Electricity price: {el_price:.3f} GEL/kWh",
-            "",
-            f"{label_a} weighted efficiency: {eff_a:.2f}",
-            f"{label_b} weighted efficiency: {eff_b:.2f}",
-            "",
-            f"{label_a} annual cost: {cost_a:,.0f} GEL/year",
-            f"{label_b} annual cost: {cost_b:,.0f} GEL/year",
-            f"Savings (A − B): {savings:,.0f} GEL/year",
-        ]
-
-        # Use the rich PDF builder for chiller too (simple)
         sections = [
             {"type": "kpi", "title": "Executive Summary", "items": [
                 ("Annual cooling demand", f"{Q_cool:,.0f} kWh_cool/yr"),
@@ -1638,3 +1602,4 @@ if tool == "Heat Pump vs Boiler":
     run_heating()
 else:
     run_chiller()
+
