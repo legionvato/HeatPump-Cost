@@ -10,6 +10,8 @@ import matplotlib.pyplot as plt
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 from reportlab.lib.units import cm
+from reportlab.lib.utils import ImageReader
+from reportlab.lib import colors
 
 
 # =========================================================
@@ -22,7 +24,7 @@ st.set_page_config(
 )
 
 APP_TITLE = "Treimax Energy Tools"
-APP_VER = "V10.0 (Heating: Gas m3 input + Glossary + Simplified UX + Client View)"
+APP_VER = "V11.2 (Richer PDF presets + Charts — NO Logo)"
 
 
 # =========================================================
@@ -63,39 +65,12 @@ def hp_booster_chain(Q_low: float, Q_high: float, cop_base: float, cop_boost: fl
     return {"E_base": E_base, "E_boost": E_boost, "Q_source": Q_source, "Q_base_out": Q_base_out}
 
 
-def build_pdf_report(title: str, lines: list[str]) -> bytes:
-    """
-    ReportLab built-in fonts (Helvetica) don't support some Unicode.
-    Keep PDF text ASCII-safe (use CO2 not CO₂).
-    """
+def fig_to_imagereader(fig) -> ImageReader:
     buf = BytesIO()
-    c = canvas.Canvas(buf, pagesize=A4)
-    w, h = A4
-    left = 2.0 * cm
-    y = h - 2.0 * cm
-
-    def line(text, dy=0.7 * cm, font="Helvetica", size=11):
-        nonlocal y
-        if y < 2.0 * cm:
-            c.showPage()
-            y = h - 2.0 * cm
-        c.setFont(font, size)
-        c.drawString(left, y, text)
-        y -= dy
-
-    c.setTitle(title)
-    line(title, dy=0.9 * cm, font="Helvetica-Bold", size=14)
-    line(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}", dy=0.9 * cm, size=10)
-    c.line(left, y, w - left, y)
-    y -= 0.8 * cm
-
-    for t in lines:
-        safe = (t or "").replace("CO₂", "CO2").replace("tCO₂", "tCO2")
-        line(safe, size=11)
-
-    c.showPage()
-    c.save()
-    return buf.getvalue()
+    fig.savefig(buf, format="png", dpi=200, bbox_inches="tight")
+    plt.close(fig)
+    buf.seek(0)
+    return ImageReader(buf)
 
 
 def barh_chart(labels, values, title, xlabel, value_fmt="{:,.0f}"):
@@ -106,6 +81,27 @@ def barh_chart(labels, values, title, xlabel, value_fmt="{:,.0f}"):
     ax.set_title(title)
     for i, v in enumerate(df["Value"]):
         ax.text(v, i, value_fmt.format(v), va="center", ha="left")
+    return fig
+
+
+def stacked_bar_cost_hp(gas_cost, hp_cost_base, hp_cost_boost, title="Annual cost comparison (HP breakdown)"):
+    fig, ax = plt.subplots()
+    labels = ["Gas Boiler", "HP System"]
+    ax.bar(labels, [gas_cost, hp_cost_base], label="Base HP")
+    ax.bar(labels, [0, hp_cost_boost], bottom=[0, hp_cost_base], label="Booster")
+    ax.set_title(title)
+    ax.set_ylabel("Annual cost (GEL)")
+    ax.legend()
+    return fig
+
+
+def pie_chart(labels, values, title):
+    fig, ax = plt.subplots()
+    vals = [max(0.0, float(v)) for v in values]
+    if sum(vals) <= 0:
+        vals = [1.0 for _ in vals]
+    ax.pie(vals, labels=labels, autopct="%1.0f%%")
+    ax.set_title(title)
     return fig
 
 
@@ -123,6 +119,233 @@ def harmonic_mean_weighted_by_capacity(cap_list, eff_list):
 
 
 # =========================================================
+# Rich PDF Builder (Treimax Georgia, no logo)
+# =========================================================
+def build_rich_pdf_report(
+    report_title: str,
+    subtitle: str,
+    sections: list[dict],
+    footer_note: str = "",
+) -> bytes:
+    """
+    sections: list of dicts like:
+      {"type":"kpi", "title":"Executive Summary", "items":[("Annual savings","12,000 GEL"), ...]}
+      {"type":"table", "title":"Inputs", "columns":["Key","Value"], "rows":[["Gas price","1.29"], ...]}
+      {"type":"text", "title":"Notes", "lines":[...]}
+      {"type":"image", "title":"Chart title", "image": ImageReader, "w_cm": 16, "h_cm": 7}
+    """
+    buf = BytesIO()
+    c = canvas.Canvas(buf, pagesize=A4)
+    W, H = A4
+
+    margin_l = 1.7 * cm
+    margin_r = 1.7 * cm
+    margin_t = 1.6 * cm
+    margin_b = 1.4 * cm
+    usable_w = W - margin_l - margin_r
+
+    page_num = 0
+
+    def new_page():
+        nonlocal page_num, y
+        if page_num > 0:
+            draw_footer()
+            c.showPage()
+        page_num += 1
+        y = H - margin_t
+        draw_header()
+
+    def draw_header():
+        nonlocal y
+        # Brand header (text-only)
+        c.setFillColor(colors.black)
+        c.setFont("Helvetica-Bold", 14)
+        c.drawString(margin_l, y, "TREIMAX GEORGIA")
+        c.setFont("Helvetica", 9)
+        c.setFillColor(colors.grey)
+        c.drawString(margin_l, y - 0.45 * cm, "Cooling, Heating and Ventilation Systems")
+        c.setFillColor(colors.black)
+
+        # Title block
+        y -= 1.05 * cm
+        c.setFont("Helvetica-Bold", 13)
+        c.drawString(margin_l, y, report_title)
+
+        y -= 0.55 * cm
+        c.setFont("Helvetica", 9)
+        c.setFillColor(colors.grey)
+        c.drawString(margin_l, y, subtitle)
+        c.setFillColor(colors.black)
+
+        y -= 0.35 * cm
+        c.setStrokeColor(colors.lightgrey)
+        c.line(margin_l, y, W - margin_r, y)
+        c.setStrokeColor(colors.black)
+        y -= 0.6 * cm
+
+    def draw_footer():
+        c.setFont("Helvetica", 8)
+        c.setFillColor(colors.grey)
+        left = margin_l
+        right = W - margin_r
+        c.drawString(left, margin_b - 0.6 * cm, f"{APP_TITLE} — {APP_VER}")
+        c.drawRightString(right, margin_b - 0.6 * cm, f"Page {page_num}")
+        if footer_note:
+            c.drawString(left, margin_b - 1.0 * cm, footer_note)
+        c.setFillColor(colors.black)
+
+    def ensure_space(h_needed):
+        nonlocal y
+        if y - h_needed < margin_b:
+            new_page()
+
+    def draw_section_title(title):
+        nonlocal y
+        ensure_space(1.1 * cm)
+        c.setFont("Helvetica-Bold", 11)
+        c.setFillColor(colors.black)
+        c.drawString(margin_l, y, title)
+        y -= 0.35 * cm
+        c.setStrokeColor(colors.lightgrey)
+        c.line(margin_l, y, W - margin_r, y)
+        c.setStrokeColor(colors.black)
+        y -= 0.45 * cm
+
+    def draw_kpi(items):
+        nonlocal y
+        # items: list[(label, value)]
+        # simple 2-column KPI grid
+        box_h = 2.2 * cm
+        ensure_space(box_h + 0.3 * cm)
+        x0 = margin_l
+        y0 = y - box_h
+        c.setStrokeColor(colors.lightgrey)
+        c.setFillColor(colors.whitesmoke)
+        c.rect(x0, y0, usable_w, box_h, fill=1, stroke=1)
+        c.setFillColor(colors.black)
+        c.setStrokeColor(colors.black)
+
+        cols = 2
+        rows = (len(items) + 1) // 2
+        col_w = usable_w / cols
+        row_h = box_h / max(1, rows)
+
+        for idx, (lab, val) in enumerate(items):
+            r = idx // cols
+            col = idx % cols
+            xx = x0 + col * col_w + 0.35 * cm
+            yy = y - (r + 1) * row_h + 0.9 * cm
+
+            c.setFont("Helvetica", 8)
+            c.setFillColor(colors.grey)
+            c.drawString(xx, yy + 0.35 * cm, str(lab))
+
+            c.setFont("Helvetica-Bold", 11)
+            c.setFillColor(colors.black)
+            c.drawString(xx, yy - 0.05 * cm, str(val))
+
+        y = y0 - 0.55 * cm
+
+    def draw_table(columns, rows, col_widths=None):
+        nonlocal y
+        # Basic table with light borders
+        if col_widths is None:
+            col_widths = [usable_w / len(columns)] * len(columns)
+        row_h = 0.55 * cm
+        header_h = 0.65 * cm
+        table_h = header_h + row_h * max(1, len(rows))
+        ensure_space(table_h + 0.4 * cm)
+
+        x = margin_l
+        y_top = y
+
+        # Header background
+        c.setFillColor(colors.lightgrey)
+        c.rect(x, y_top - header_h, usable_w, header_h, fill=1, stroke=0)
+        c.setFillColor(colors.black)
+
+        # Header text
+        c.setFont("Helvetica-Bold", 9)
+        xx = x
+        for i, col in enumerate(columns):
+            c.drawString(xx + 0.15 * cm, y_top - 0.45 * cm, str(col))
+            xx += col_widths[i]
+
+        # Grid + rows
+        c.setStrokeColor(colors.lightgrey)
+        y_cursor = y_top - header_h
+        c.line(x, y_cursor, x + usable_w, y_cursor)
+
+        c.setFont("Helvetica", 9)
+        for r in rows:
+            y_cursor -= row_h
+            xx = x
+            for i, cell in enumerate(r):
+                c.drawString(xx + 0.15 * cm, y_cursor + 0.18 * cm, str(cell))
+                xx += col_widths[i]
+            c.line(x, y_cursor, x + usable_w, y_cursor)
+
+        # Vertical lines
+        xx = x
+        c.line(xx, y_top, xx, y_cursor)
+        for w in col_widths:
+            xx += w
+            c.line(xx, y_top, xx, y_cursor)
+
+        # Outer border
+        c.setStrokeColor(colors.lightgrey)
+        c.rect(x, y_cursor, usable_w, (y_top - y_cursor), fill=0, stroke=1)
+        c.setStrokeColor(colors.black)
+
+        y = y_cursor - 0.55 * cm
+
+    def draw_text(lines):
+        nonlocal y
+        c.setFont("Helvetica", 9.5)
+        for line in lines:
+            ensure_space(0.55 * cm)
+            safe = (line or "").replace("CO₂", "CO2").replace("tCO₂", "tCO2")
+            c.drawString(margin_l, y, safe)
+            y -= 0.48 * cm
+        y -= 0.2 * cm
+
+    def draw_image(img: ImageReader, w_cm=16, h_cm=7):
+        nonlocal y
+        w = w_cm * cm
+        h = h_cm * cm
+        ensure_space(h + 0.5 * cm)
+        x = margin_l
+        c.setStrokeColor(colors.lightgrey)
+        c.rect(x, y - h, min(w, usable_w), h, fill=0, stroke=1)
+        c.drawImage(img, x, y - h, width=min(w, usable_w), height=h, preserveAspectRatio=True, anchor="sw")
+        c.setStrokeColor(colors.black)
+        y -= (h + 0.55 * cm)
+
+    # Start first page
+    new_page()
+
+    for sec in sections:
+        stype = sec.get("type")
+        title = sec.get("title", "")
+        if title:
+            draw_section_title(title)
+
+        if stype == "kpi":
+            draw_kpi(sec.get("items", []))
+        elif stype == "table":
+            draw_table(sec.get("columns", []), sec.get("rows", []), sec.get("col_widths"))
+        elif stype == "text":
+            draw_text(sec.get("lines", []))
+        elif stype == "image":
+            draw_image(sec.get("image"), sec.get("w_cm", 16), sec.get("h_cm", 7))
+
+    draw_footer()
+    c.showPage()
+    c.save()
+    return buf.getvalue()
+
+
+# =========================================================
 # Save/Load JSON (no DB)
 # =========================================================
 PROJECT_KEYS = [
@@ -132,16 +355,16 @@ PROJECT_KEYS = [
     # HEATING
     "heat_view_mode",  # Client-friendly vs Expert
     "heat_mode",
-    "heat_demand_input_method",   # NEW (existing building: kWh_th vs gas m3)
-    "heat_gas_m3_year",           # NEW
-    "heat_gas_includes_dhw",      # NEW (Yes/No/Not sure)
+    "heat_demand_input_method",
+    "heat_gas_m3_year",
+    "heat_gas_includes_dhw",
     "heat_application",
     "heat_climate",
     "heat_el_price",
     "heat_gas_price",
     "heat_kwh_per_m3",
-    "heat_boiler_preset",         # NEW
-    "heat_eta_override",          # NEW
+    "heat_boiler_preset",
+    "heat_eta_override",
     "heat_eta_boiler",
     "heat_cop_source",
     "heat_scop",
@@ -331,7 +554,6 @@ def run_heating():
 """
         )
 
-    # NOTE / assumptions (keep short)
     st.info(
         "Assumptions:\n"
         f"- Base heat pump max supply temperature = {HP_MAX_SUPPLY_C}°C\n"
@@ -344,7 +566,6 @@ def run_heating():
     with st.sidebar:
         st.header("Heating Inputs")
 
-        # View mode
         st.radio(
             "View",
             ["Client-friendly (simple)", "Expert (advanced)"],
@@ -361,8 +582,6 @@ def run_heating():
         )
 
         st.selectbox("Climate", CLIMATES, index=0, key="heat_climate")
-
-        # Application
         st.selectbox("Application", APPLICATIONS, index=0, key="heat_application")
 
         st.divider()
@@ -374,7 +593,6 @@ def run_heating():
         )
         st.number_input("Gas price (GEL/m³)", min_value=0.01, value=1.29, step=0.01, key="heat_gas_price")
 
-        # Gas conversion (advanced)
         if not client_view:
             with st.expander("Advanced: Gas energy content", expanded=False):
                 st.number_input(
@@ -383,14 +601,12 @@ def run_heating():
                     key="heat_kwh_per_m3"
                 )
         else:
-            # Keep a sensible default in state if not set
             if "heat_kwh_per_m3" not in st.session_state:
                 st.session_state["heat_kwh_per_m3"] = 10.0
 
         st.divider()
         st.subheader("Boiler baseline")
 
-        # Boiler preset + optional override
         st.selectbox(
             "Boiler efficiency preset (η)",
             list(BOILER_PRESETS.keys()),
@@ -409,13 +625,11 @@ def run_heating():
                 key="heat_eta_boiler",
             )
         else:
-            # In simple mode without override, force preset into state (no widget)
             st.session_state["heat_eta_boiler"] = preset_eta
 
         st.divider()
         st.subheader("Heat pump efficiency")
 
-        # Simple path: single seasonal COP
         if client_view:
             st.number_input(
                 "Seasonal COP (annual average)",
@@ -430,7 +644,7 @@ def run_heating():
 
             heat_climate = st.session_state.get("heat_climate", "Tbilisi")
             cop_source = st.session_state.get("heat_cop_source", "Manual")
-            cop_base = 2.8  # overwritten below
+            cop_base = 2.8
 
             if cop_source == "From datasheet SCOP":
                 st.number_input("SCOP (datasheet, seasonal)", min_value=0.5, value=3.78, step=0.01, key="heat_scop")
@@ -468,7 +682,6 @@ def run_heating():
         else:
             st.session_state["heat_cop_boost"] = 0.0
 
-        # Payback (keep, but hide CAPEX inputs in client view unless enabled)
         st.divider()
         st.subheader("CAPEX / Payback (optional)")
         st.checkbox("Calculate payback", value=False, key="heat_enable_payback")
@@ -476,7 +689,6 @@ def run_heating():
             st.number_input("CAPEX: HP system (GEL)", min_value=0.0, value=0.0, step=10_000.0, key="heat_capex_hp")
             st.number_input("CAPEX: Boiler baseline (GEL)", min_value=0.0, value=0.0, step=10_000.0, key="heat_capex_boiler")
         else:
-            # keep keys stable
             if "heat_capex_hp" not in st.session_state:
                 st.session_state["heat_capex_hp"] = 0.0
             if "heat_capex_boiler" not in st.session_state:
@@ -491,7 +703,6 @@ def run_heating():
     heat_application = st.session_state.get("heat_application", APPLICATIONS[0])
     heat_climate = st.session_state.get("heat_climate", CLIMATES[0])
 
-    # Building type & insulation shown for scratch projects (and also shown for DHW presets)
     if heat_mode == "Existing building (comparison)":
         colA, colB = st.columns([1.2, 1.0])
 
@@ -532,7 +743,6 @@ def run_heating():
                     index=0,
                     key="heat_gas_includes_dhw",
                 )
-                # Derive useful heat demand from gas bills
                 gas_m3_in = float(st.session_state.get("heat_gas_m3_year", 0.0))
                 gas_input_kwh_in = gas_m3_in * kwh_per_m3
                 Q_from_gas = gas_input_kwh_in * eta_boiler
@@ -560,12 +770,10 @@ def run_heating():
             else:
                 st.caption("Direct input (annual useful heat).")
 
-        # Set Q_total for downstream
         Q_total = float(st.session_state.get("heat_q_annual", 344_100.0))
-        insulation = st.session_state.get("heat_insulation", "Standard")  # not used here, keep key stable
+        insulation = st.session_state.get("heat_insulation", "Standard")
 
     else:
-        # Scratch project (estimate)
         colA, colB = st.columns([1.2, 1.0])
 
         with colA:
@@ -637,7 +845,6 @@ def run_heating():
         sh_share_pct = 100
         dhw_target_c = 50
     else:
-        # Preset DHW share
         building_type = st.session_state.get("heat_building_type", "Hotel")
         preset = int(round(DHW_SHARE_PRESET.get(building_type, 0.10) * 100))
         st.checkbox("Override DHW share (%)", value=False, key="heat_dhw_override")
@@ -726,16 +933,12 @@ def run_heating():
     kwh_per_m3 = float(st.session_state.get("heat_kwh_per_m3", 10.0))
     eta_boiler = float(st.session_state.get("heat_eta_boiler", 0.93))
 
-    # HP electricity
     chain_sh = hp_booster_chain(Q_sh_low, Q_sh_high, cop_base, cop_boost)
     chain_dhw = hp_booster_chain(Q_dhw_low, Q_dhw_high, cop_base, cop_boost)
 
     E_total_hp = chain_sh["E_base"] + chain_sh["E_boost"] + chain_dhw["E_base"] + chain_dhw["E_boost"]
     cost_hp = E_total_hp * el_price
 
-    # GAS baseline:
-    # - If user provided gas m3/year (existing building + method gas), use it directly for cost
-    # - Else derive gas input from useful heat + eta
     gas_method_active = (
         st.session_state.get("heat_mode") == "Existing building (comparison)"
         and st.session_state.get("heat_demand_input_method") == "I know annual gas consumption (m³/year)"
@@ -745,7 +948,6 @@ def run_heating():
     if gas_method_active:
         gas_m3 = float(st.session_state.get("heat_gas_m3_year", 0.0))
         gas_input_kwh = gas_m3 * kwh_per_m3
-        # Q_total already derived from gas_input_kwh * eta_boiler (above)
         cost_gas = gas_m3 * gas_price
     else:
         gas_input_kwh = Q_total / eta_boiler if eta_boiler > 0 else 0.0
@@ -758,7 +960,6 @@ def run_heating():
     savings = cost_gas - cost_hp
     eff_cop = (Q_total / E_total_hp) if E_total_hp > 0 else 0.0
 
-    # sanity warning (expert only)
     checkpoint = float(st.session_state.get("heat_checkpoint_cop", 0.0) or 0.0)
     if (not st.session_state.get("heat_view_mode", "").startswith("Client")) and checkpoint > 0 and cop_base > checkpoint * 1.6:
         st.warning(
@@ -794,7 +995,6 @@ def run_heating():
             st.warning("HP system is more expensive than gas under these inputs.")
         d.metric("Boiler CO2 (baseline)", f"{gas_co2_tonnes_per_year:,.2f} tCO2/yr")
 
-        # Narrative (simple & useful)
         if cost_gas > 0:
             pct = (savings / cost_gas) * 100.0
             if savings >= 0:
@@ -808,7 +1008,6 @@ def run_heating():
                     f"(**{abs(savings):,.0f} GEL/year**) compared to a gas boiler baseline."
                 )
 
-        # Key assumptions box (compact)
         with st.expander("Key assumptions used", expanded=False):
             st.write(f"- Electricity price: **{el_price:.3f} GEL/kWh**")
             st.write(f"- Gas price: **{gas_price:.2f} GEL/m³**")
@@ -864,55 +1063,244 @@ def run_heating():
         st.write(f"- Gas boiler CO2: **{gas_co2_tonnes_per_year:,.2f} tCO2/year**")
 
     # =====================================================
-    # Export tab
+    # Export tab (NEW: report presets + richer PDF)
     # =====================================================
     with t3:
-        report_title = "HP vs Boiler Report"
+        st.markdown("### Report preset (select what you need)")
+        preset = st.radio(
+            "PDF report type",
+            ["Client One-Pager", "Sales Proposal", "Technical (with Appendix)", "Financial Focus"],
+            index=0,
+            horizontal=True,
+        )
+
+        # Build a richer report based on preset
+        report_title = "Heat Pump vs Gas Boiler — Report"
         if project_name:
-            report_title = f"{project_name} — {report_title}"
+            report_title = f"{project_name} — Heat Pump vs Gas Boiler"
 
-        pdf_lines = []
-        if project_name:
-            pdf_lines.append(f"Project: {project_name}")
-            pdf_lines.append("")
-
-        pdf_lines += [
-            f"Mode: {heat_mode} | {heat_application} | {heat_climate}",
-            "",
-            "Inputs:",
-            f"- Annual useful heat: {Q_total:,.0f} kWh_th/year",
-            f"- SH share: {sh_share_pct}% | DHW share: {dhw_share_pct}%",
-            f"- DHW target: {dhw_target_c}C",
-            f"- Boosted share (>50C): {boosted_share_pct}%",
-            f"- Seasonal COP used: {cop_base:.2f}",
-            f"- Booster installed: {'Yes' if booster_installed else 'No'}" + (f" | Booster COP: {cop_boost:.2f}" if booster_installed else ""),
-            f"- Electricity price: {el_price:.3f} GEL/kWh",
-            f"- Gas price: {gas_price:.2f} GEL/m3",
-            f"- Boiler efficiency eta: {eta_boiler:.2f}",
-        ]
-
-        if gas_method_active:
-            pdf_lines += [
-                f"- Gas baseline from bills: {gas_m3:,.0f} m3/year",
-            ]
+        subtitle = f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')} | Climate: {heat_climate} | Application: {heat_application}"
+        if st.session_state.get("heat_mode") == "Existing building (comparison)":
+            subtitle += " | Mode: Existing building"
         else:
-            pdf_lines += [
-                f"- Gas baseline derived: {gas_m3:,.0f} m3/year",
+            subtitle += " | Mode: Scratch estimate"
+
+        # Common values for report content
+        pct_savings = (savings / cost_gas * 100.0) if cost_gas > 0 else 0.0
+        narrative = ""
+        if cost_gas > 0:
+            if savings >= 0:
+                narrative = (
+                    f"Under current inputs, the heat pump system reduces annual energy cost by "
+                    f"{pct_savings:.1f}% ({savings:,.0f} GEL/year) versus the gas boiler baseline."
+                )
+            else:
+                narrative = (
+                    f"Under current inputs, the heat pump system increases annual energy cost by "
+                    f"{abs(pct_savings):.1f}% ({abs(savings):,.0f} GEL/year) versus the gas boiler baseline."
+                )
+        else:
+            narrative = "Could not compute % savings (gas baseline cost is zero or undefined)."
+
+        # Charts (create ImageReaders)
+        img_cost = fig_to_imagereader(
+            barh_chart(
+                ["Gas Boiler", "HP System"],
+                [cost_gas, cost_hp],
+                "Annual cost comparison",
+                "Annual cost (GEL)",
+                value_fmt="{:,.0f} GEL",
+            )
+        )
+
+        img_pie_split = fig_to_imagereader(
+            pie_chart(
+                ["Space heating", "DHW"],
+                [Q_sh, Q_dhw],
+                "Heat demand split (annual useful heat)",
+            )
+        )
+
+        img_pie_boost = fig_to_imagereader(
+            pie_chart(
+                ["≤50°C (base HP)", ">50°C (boosted)"],
+                [Q_total - (Q_sh_high + Q_dhw_high), (Q_sh_high + Q_dhw_high)],
+                "Boosted share (>50°C)",
+            )
+        )
+
+        # HP breakdown costs for stacked bar (base vs booster)
+        E_base_total = chain_sh["E_base"] + chain_dhw["E_base"]
+        E_boost_total = chain_sh["E_boost"] + chain_dhw["E_boost"]
+        cost_hp_base = E_base_total * el_price
+        cost_hp_boost = E_boost_total * el_price
+        img_cost_stacked = fig_to_imagereader(
+            stacked_bar_cost_hp(cost_gas, cost_hp_base, cost_hp_boost)
+        )
+
+        # Sensitivity (financial focus only): fixed +20% electricity, +20% gas
+        sens_rows = []
+        if preset == "Financial Focus":
+            el_up = el_price * 1.20
+            gas_up = gas_price * 1.20
+            # keep energies same; only prices change
+            base_sav = cost_gas - cost_hp
+            sav_el_up = cost_gas - (E_total_hp * el_up)
+            if gas_method_active:
+                cost_gas_gasup = gas_m3 * gas_up
+            else:
+                cost_gas_gasup = gas_m3 * gas_up
+            sav_gas_up = cost_gas_gasup - cost_hp
+
+            sens_rows = [
+                ["Base case", f"{el_price:.3f}", f"{gas_price:.2f}", f"{base_sav:,.0f}"],
+                ["Electricity +20%", f"{el_up:.3f}", f"{gas_price:.2f}", f"{sav_el_up:,.0f}"],
+                ["Gas +20%", f"{el_price:.3f}", f"{gas_up:.2f}", f"{sav_gas_up:,.0f}"],
             ]
 
-        pdf_lines += [
-            "",
-            "Results:",
-            f"- Gas annual cost: {cost_gas:,.0f} GEL/year",
-            f"- HP annual cost: {cost_hp:,.0f} GEL/year",
-            f"- Annual savings: {savings:,.0f} GEL/year",
-            f"- Effective system COP: {eff_cop:.2f}",
-            "",
-            "CO2 (boiler baseline only):",
-            f"- Gas boiler CO2: {gas_co2_tonnes_per_year:,.2f} tCO2/year",
-        ]
+        # Sections per preset (no extra option checkboxes)
+        sections = []
 
-        pdf_bytes = build_pdf_report(report_title, pdf_lines)
+        # Executive KPIs (always)
+        kpis = [
+            ("Annual useful heat", f"{Q_total:,.0f} kWh_th/yr"),
+            ("Annual cost (Gas)", f"{cost_gas:,.0f} GEL"),
+            ("Annual cost (HP)", f"{cost_hp:,.0f} GEL"),
+            ("Savings (Gas − HP)", f"{savings:,.0f} GEL"),
+            ("Savings (%)", f"{pct_savings:.1f}%" if cost_gas > 0 else "N/A"),
+            ("Boosted share", f"{boosted_share_pct}%"),
+            ("Seasonal COP used", f"{cop_base:.2f}"),
+            ("CO2 baseline (gas)", f"{gas_co2_tonnes_per_year:,.2f} tCO2/yr"),
+        ]
+        sections.append({"type": "kpi", "title": "Executive Summary", "items": kpis})
+
+        # Narrative
+        sections.append({"type": "text", "title": "Summary", "lines": [narrative]})
+
+        # Inputs snapshot (compact)
+        inputs_rows = [
+            ["Electricity price (GEL/kWh)", f"{el_price:.3f}"],
+            ["Gas price (GEL/m³)", f"{gas_price:.2f}"],
+            ["Boiler efficiency η", f"{eta_boiler:.2f}"],
+            ["Gas energy content (kWh/m³)", f"{kwh_per_m3:.1f}"],
+            ["Seasonal COP (≤50°C)", f"{cop_base:.2f}"],
+            ["Booster installed", "Yes" if booster_installed else "No"],
+            ["Booster COP", f"{cop_boost:.2f}" if booster_installed else "N/A"],
+            ["Heat mode", heat_mode],
+            ["Climate", heat_climate],
+            ["Application", heat_application],
+        ]
+        if gas_method_active:
+            inputs_rows.append(["Gas baseline source", "From bills (m³/year input)"])
+            inputs_rows.append(["Gas bills (m³/year)", f"{gas_m3:,.0f}"])
+        else:
+            inputs_rows.append(["Gas baseline source", "Derived from heat demand"])
+            inputs_rows.append(["Derived gas (m³/year)", f"{gas_m3:,.0f}"])
+
+        sections.append(
+            {"type": "table", "title": "Inputs (snapshot)", "columns": ["Item", "Value"], "rows": inputs_rows}
+        )
+
+        # Charts selection by preset (fixed)
+        if preset in ["Client One-Pager", "Sales Proposal", "Financial Focus"]:
+            sections.append({"type": "image", "title": "Annual cost comparison", "image": img_cost, "w_cm": 16, "h_cm": 6.5})
+
+        if preset in ["Client One-Pager", "Sales Proposal"]:
+            sections.append({"type": "image", "title": "Heat demand split", "image": img_pie_split, "w_cm": 15, "h_cm": 7})
+
+        if preset == "Sales Proposal":
+            # show boosted share pie (useful for mixed/high-temp narrative)
+            if boosted_share_pct > 0:
+                sections.append({"type": "image", "title": "Boosted share", "image": img_pie_boost, "w_cm": 15, "h_cm": 7})
+
+            # Next steps checklist
+            sections.append(
+                {
+                    "type": "text",
+                    "title": "Next steps",
+                    "lines": [
+                        "• Confirm space-heating temperature regime and whether any emitters require >50°C supply.",
+                        "• Confirm DHW share and DHW target temperature (50°C vs 60°C).",
+                        "• Validate whether gas bills include DHW / kitchen / process loads.",
+                        "• Obtain HP datasheet and confirm SCOP / winter COP points for final proposal.",
+                    ],
+                }
+            )
+
+        if preset == "Financial Focus":
+            if sens_rows:
+                sections.append(
+                    {
+                        "type": "table",
+                        "title": "Price sensitivity (stress test)",
+                        "columns": ["Scenario", "Electricity (GEL/kWh)", "Gas (GEL/m³)", "Savings (GEL/yr)"],
+                        "rows": sens_rows,
+                    }
+                )
+            sections.append(
+                {
+                    "type": "text",
+                    "title": "Interpretation",
+                    "lines": [
+                        "Sensitivity shows how savings change if energy prices move, keeping demand and system performance unchanged.",
+                        "This is not a forecast; it is a robustness check for decision-making.",
+                    ],
+                }
+            )
+
+        if preset == "Technical (with Appendix)":
+            # Technical report uses stacked cost breakdown and more calculations
+            sections.append({"type": "image", "title": "Annual cost comparison (HP breakdown)", "image": img_cost_stacked, "w_cm": 16, "h_cm": 7})
+
+            tech_rows = [
+                ["Total useful heat (kWh_th/yr)", f"{Q_total:,.0f}"],
+                ["SH useful heat (kWh_th/yr)", f"{Q_sh:,.0f}"],
+                ["DHW useful heat (kWh_th/yr)", f"{Q_dhw:,.0f}"],
+                ["Boosted useful heat (kWh_th/yr)", f"{(Q_sh_high + Q_dhw_high):,.0f}"],
+                ["Non-boosted useful heat (kWh_th/yr)", f"{(Q_total - (Q_sh_high + Q_dhw_high)):,.0f}"],
+                ["HP electricity base (kWh_el/yr)", f"{E_base_total:,.0f}"],
+                ["HP electricity booster (kWh_el/yr)", f"{E_boost_total:,.0f}"],
+                ["HP total electricity (kWh_el/yr)", f"{E_total_hp:,.0f}"],
+                ["Effective system COP", f"{eff_cop:.2f}"],
+                ["Gas input energy (kWh/yr)", f"{gas_input_kwh:,.0f}"],
+                ["Gas volume (m³/yr)", f"{gas_m3:,.0f}"],
+                ["CO2 baseline (tCO2/yr)", f"{gas_co2_tonnes_per_year:,.2f}"],
+            ]
+            sections.append(
+                {"type": "table", "title": "Appendix — Calculation breakdown", "columns": ["Metric", "Value"], "rows": tech_rows}
+            )
+
+            sections.append(
+                {
+                    "type": "text",
+                    "title": "Assumptions & limitations",
+                    "lines": [
+                        "• Base HP supply is capped at 50°C; demand above 50°C is treated as boosted share only if booster is installed.",
+                        "• Seasonal COP is an annual average (manual or derived). Actual performance depends on design and operating conditions.",
+                        "• CO2 shown is gas combustion baseline only (does not include electricity emissions).",
+                    ],
+                }
+            )
+
+        # Always include a short assumptions note at the end (compact)
+        sections.append(
+            {
+                "type": "text",
+                "title": "Notes",
+                "lines": [
+                    "CO2 values represent gas combustion baseline only. Electricity emissions are not included in this tool.",
+                    "This report is a screening-level comparison and should be validated with detailed design inputs for final sizing.",
+                ],
+            }
+        )
+
+        pdf_bytes = build_rich_pdf_report(
+            report_title=report_title,
+            subtitle=subtitle,
+            sections=sections,
+            footer_note="Treimax Georgia — Internal tool output for feasibility screening.",
+        )
+
         pdf_filename = f"hp_vs_boiler_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf"
         if project_name:
             safe_name = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in project_name).strip("_")
@@ -927,6 +1315,7 @@ def run_heating():
             use_container_width=True,
         )
 
+        # CSV export (unchanged, still useful)
         df_export = pd.DataFrame(
             [
                 ("Project", "Project name", project_name),
@@ -942,6 +1331,7 @@ def run_heating():
                 ("Result", "Cost HP (GEL/year)", cost_hp),
                 ("Result", "Savings (GEL/year)", savings),
                 ("Result", "Gas CO2 (tCO2/year)", gas_co2_tonnes_per_year),
+                ("Report", "Preset", preset),
             ],
             columns=["Type", "Key", "Value"],
         )
@@ -1162,33 +1552,51 @@ def run_chiller():
         project_name = (st.session_state.get("project_name") or "").strip()
         report_title = "Chiller Comparison Report"
         if project_name:
-            report_title = f"{project_name} — {report_title}"
+            report_title = f"{project_name} — Chiller Comparison"
 
-        pdf_lines = []
-        if project_name:
-            pdf_lines.append(f"Project: {project_name}")
-            pdf_lines.append("")
-
-        pdf_lines += [
+        pdf_lines = [
+            f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
             f"Setup A: {label_a}",
             f"Setup B: {label_b}",
             "",
-            "Cooling demand:",
-            f"- Annual cooling demand: {Q_cool:,.0f} kWh_cool/year",
-            f"- Method: {demand_note}",
-            f"- Electricity price: {el_price:.3f} GEL/kWh",
+            f"Annual cooling demand: {Q_cool:,.0f} kWh_cool/year",
+            f"Demand method: {demand_note}",
+            f"Electricity price: {el_price:.3f} GEL/kWh",
             "",
-            "Efficiencies (weighted):",
-            f"- {label_a}: {eff_a:.2f}",
-            f"- {label_b}: {eff_b:.2f}",
+            f"{label_a} weighted efficiency: {eff_a:.2f}",
+            f"{label_b} weighted efficiency: {eff_b:.2f}",
             "",
-            "Results:",
-            f"- {label_a} annual cost: {cost_a:,.0f} GEL/year",
-            f"- {label_b} annual cost: {cost_b:,.0f} GEL/year",
-            f"- Savings (A − B): {savings:,.0f} GEL/year",
+            f"{label_a} annual cost: {cost_a:,.0f} GEL/year",
+            f"{label_b} annual cost: {cost_b:,.0f} GEL/year",
+            f"Savings (A − B): {savings:,.0f} GEL/year",
         ]
 
-        pdf_bytes = build_pdf_report(report_title, pdf_lines)
+        # Use the rich PDF builder for chiller too (simple)
+        sections = [
+            {"type": "kpi", "title": "Executive Summary", "items": [
+                ("Annual cooling demand", f"{Q_cool:,.0f} kWh_cool/yr"),
+                (f"{label_a} annual cost", f"{cost_a:,.0f} GEL"),
+                (f"{label_b} annual cost", f"{cost_b:,.0f} GEL"),
+                ("Savings (A − B)", f"{savings:,.0f} GEL/yr"),
+            ]},
+            {"type": "text", "title": "Inputs", "lines": [
+                f"Demand method: {demand_note}",
+                f"Electricity price: {el_price:.3f} GEL/kWh",
+                f"{label_a} weighted efficiency: {eff_a:.2f}",
+                f"{label_b} weighted efficiency: {eff_b:.2f}",
+            ]},
+            {"type": "image", "title": "Annual cost comparison", "image": fig_to_imagereader(
+                barh_chart([label_a, label_b], [cost_a, cost_b], "Chiller annual cost comparison", "Annual cost (GEL)", "{:,.0f} GEL")
+            ), "w_cm": 16, "h_cm": 6.5},
+        ]
+
+        pdf_bytes = build_rich_pdf_report(
+            report_title=report_title,
+            subtitle=f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+            sections=sections,
+            footer_note="Treimax Georgia — Internal tool output for feasibility screening.",
+        )
+
         pdf_filename = f"chiller_comparison_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf"
         if project_name:
             safe_name = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in project_name).strip("_")
@@ -1230,4 +1638,3 @@ if tool == "Heat Pump vs Boiler":
     run_heating()
 else:
     run_chiller()
-
