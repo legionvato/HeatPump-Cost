@@ -212,59 +212,58 @@ def build_rich_pdf_report(
         c.line(margin_l, y, W - margin_r, y)
         c.setStrokeColor(colors.black)
         y -= 0.45 * cm
-
-    def draw_kpi(items):
         
-def draw_kpi(items):
-    nonlocal y
+ def draw_kpi(items):
+        nonlocal y
+        import math
 
-    import math
+        cols = 2
+        n = len(items)
+        rows = max(1, math.ceil(n / cols))
 
-    cols = 2
-    n = len(items)
-    rows = max(1, math.ceil(n / cols))
+        # Dynamic sizing (prevents overlap)
+        row_h = 1.05 * cm
+        pad_top = 0.25 * cm
+        pad_bottom = 0.25 * cm
+        box_h = rows * row_h + pad_top + pad_bottom
 
-    # Dynamic sizing (prevents overlap)
-    row_h = 1.05 * cm
-    pad_top = 0.25 * cm
-    pad_bottom = 0.25 * cm
-    box_h = rows * row_h + pad_top + pad_bottom
+        ensure_space(box_h + 0.35 * cm)
 
-    ensure_space(box_h + 0.35 * cm)
+        x0 = margin_l
+        y_top = y
+        y0 = y_top - box_h
 
-    x0 = margin_l
-    y_top = y
-    y0 = y_top - box_h
+        # Background
+        c.setStrokeColor(colors.lightgrey)
+        c.setFillColor(colors.whitesmoke)
+        c.rect(x0, y0, usable_w, box_h, fill=1, stroke=1)
 
-    # Background
-    c.setStrokeColor(colors.lightgrey)
-    c.setFillColor(colors.whitesmoke)
-    c.rect(x0, y0, usable_w, box_h, fill=1, stroke=1)
+        col_w = usable_w / cols
 
-    col_w = usable_w / cols
+        for idx, (lab, val) in enumerate(items):
+            r = idx // cols
+            col = idx % cols
 
-    for idx, (lab, val) in enumerate(items):
-        r = idx // cols
-        col = idx % cols
+            xx = x0 + col * col_w + 0.35 * cm
 
-        xx = x0 + col * col_w + 0.35 * cm
+            row_top = y_top - pad_top - r * row_h
+            label_y = row_top - 0.35 * cm
+            value_y = row_top - 0.80 * cm
 
-        row_top = y_top - pad_top - r * row_h
-        label_y = row_top - 0.35 * cm
-        value_y = row_top - 0.80 * cm
+            c.setFont("Helvetica", 8)
+            c.setFillColor(colors.grey)
+            c.drawString(xx, label_y, str(lab))
 
-        c.setFont("Helvetica", 8)
-        c.setFillColor(colors.grey)
-        c.drawString(xx, label_y, str(lab))
+            c.setFont("Helvetica-Bold", 11)
+            c.setFillColor(colors.black)
+            c.drawString(xx, value_y, str(val))
 
-        c.setFont("Helvetica-Bold", 11)
         c.setFillColor(colors.black)
-        c.drawString(xx, value_y, str(val))
+        c.setStrokeColor(colors.black)
 
-    c.setFillColor(colors.black)
-    c.setStrokeColor(colors.black)
+        y = y0 - 0.55 * cm
 
-    y = y0 - 0.55 * cm
+
     def draw_table(columns, rows, col_widths=None):
         nonlocal y
         # Basic table with light borders
@@ -318,6 +317,7 @@ def draw_kpi(items):
 
         y = y_cursor - 0.55 * cm
 
+
     def draw_text(lines):
         nonlocal y
         c.setFont("Helvetica", 9.5)
@@ -327,6 +327,7 @@ def draw_kpi(items):
             c.drawString(margin_l, y, safe)
             y -= 0.48 * cm
         y -= 0.2 * cm
+
 
     def draw_image(img: ImageReader, w_cm=16, h_cm=7):
         nonlocal y
@@ -339,30 +340,6 @@ def draw_kpi(items):
         c.drawImage(img, x, y - h, width=min(w, usable_w), height=h, preserveAspectRatio=True, anchor="sw")
         c.setStrokeColor(colors.black)
         y -= (h + 0.55 * cm)
-
-    # Start first page
-    new_page()
-
-    for sec in sections:
-        stype = sec.get("type")
-        title = sec.get("title", "")
-        if title:
-            draw_section_title(title)
-
-        if stype == "kpi":
-            draw_kpi(sec.get("items", []))
-        elif stype == "table":
-            draw_table(sec.get("columns", []), sec.get("rows", []), sec.get("col_widths"))
-        elif stype == "text":
-            draw_text(sec.get("lines", []))
-        elif stype == "image":
-            draw_image(sec.get("image"), sec.get("w_cm", 16), sec.get("h_cm", 7))
-
-    draw_footer()
-    c.showPage()
-    c.save()
-    return buf.getvalue()
-
 
 # =========================================================
 # Save/Load JSON (no DB)
