@@ -385,8 +385,8 @@ PROJECT_KEYS = [
     "heat_cop_method_scop",
     "heat_cop_base_manual",
     "heat_base_cop_m3",
-    "heat_base_cop_p2",
-    "heat_base_cop_p7",
+    "heat_base_cop_p6",
+    "heat_base_cop_p12",
     "heat_checkpoint_cop",
     "heat_booster_installed",
     "heat_cop_boost",
@@ -444,9 +444,16 @@ def collect_project_state() -> dict:
 
 
 def apply_project_state(payload: dict) -> None:
+    # Backward compatibility (older projects used +2°C / +7°C keys)
+    if "heat_base_cop_p6" not in payload and "heat_base_cop_p2" in payload:
+        payload["heat_base_cop_p6"] = payload.get("heat_base_cop_p2")
+    if "heat_base_cop_p12" not in payload and "heat_base_cop_p7" in payload:
+        payload["heat_base_cop_p12"] = payload.get("heat_base_cop_p7")
+
     for k in PROJECT_KEYS:
         if k in payload:
             st.session_state[k] = payload[k]
+
 
 
 # =========================================================
@@ -533,9 +540,9 @@ HEATING_REGIMES = {
 }
 
 SH_WEIGHTS_3 = {
-    "Tbilisi": {-3: 0.25, 2: 0.45, 7: 0.30},
-    "Batumi": {-3: 0.10, 2: 0.35, 7: 0.55},
-    "Gudauri": {-3: 0.45, 2: 0.40, 7: 0.15},
+    "Tbilisi": {-3: 0.25, 6: 0.45, 12: 0.30},
+    "Batumi": {-3: 0.10, 6: 0.35, 12: 0.55},
+    "Gudauri": {-3: 0.45, 6: 0.40, 12: 0.15},
 }
 
 BOILER_PRESETS = {
@@ -666,12 +673,12 @@ def run_heating():
                     cop_base = float(st.session_state.get("heat_scop", 3.78))
                 else:
                     st.number_input("COP at -3°C (≤50°C supply)", min_value=0.1, value=2.6, step=0.05, key="heat_base_cop_m3")
-                    st.number_input("COP at +2°C (≤50°C supply)", min_value=0.1, value=2.8, step=0.05, key="heat_base_cop_p2")
-                    st.number_input("COP at +7°C (≤50°C supply)", min_value=0.1, value=3.0, step=0.05, key="heat_base_cop_p7")
+                    st.number_input("COP at +6°C (≤50°C supply)", min_value=0.1, value=2.8, step=0.05, key="heat_base_cop_p6")
+                    st.number_input("COP at +12°C (≤50°C supply)", min_value=0.1, value=3.0, step=0.05, key="heat_base_cop_p12")
                     pts = {
                         -3: st.session_state["heat_base_cop_m3"],
-                        2: st.session_state["heat_base_cop_p2"],
-                        7: st.session_state["heat_base_cop_p7"],
+                        6: st.session_state["heat_base_cop_p6"],
+                        12: st.session_state["heat_base_cop_p12"],
                     }
                     cop_base = weighted_avg(pts, SH_WEIGHTS_3[heat_climate])
                     st.caption(f"Derived seasonal COP (weighted by climate): {cop_base:.2f}")
@@ -681,12 +688,12 @@ def run_heating():
                     st.number_input("Seasonal COP (annual average)", min_value=0.5, value=2.8, step=0.1, key="heat_cop_base_manual")
                 else:
                     st.number_input("COP at -3°C (≤50°C supply)", min_value=0.1, value=2.6, step=0.05, key="heat_base_cop_m3")
-                    st.number_input("COP at +2°C (≤50°C supply)", min_value=0.1, value=2.8, step=0.05, key="heat_base_cop_p2")
-                    st.number_input("COP at +7°C (≤50°C supply)", min_value=0.1, value=3.0, step=0.05, key="heat_base_cop_p7")
+                    st.number_input("COP at +6°C (≤50°C supply)", min_value=0.1, value=2.8, step=0.05, key="heat_base_cop_p6")
+                    st.number_input("COP at +12°C (≤50°C supply)", min_value=0.1, value=3.0, step=0.05, key="heat_base_cop_p12")
                     pts = {
                         -3: st.session_state["heat_base_cop_m3"],
-                        2: st.session_state["heat_base_cop_p2"],
-                        7: st.session_state["heat_base_cop_p7"],
+                        6: st.session_state["heat_base_cop_p6"],
+                        12: st.session_state["heat_base_cop_p12"],
                     }
                     cop_base = weighted_avg(pts, SH_WEIGHTS_3[heat_climate])
                     st.caption(f"Derived seasonal COP (weighted by climate): {cop_base:.2f}")
@@ -935,8 +942,8 @@ def run_heating():
         else:
             pts = {
                 -3: float(st.session_state.get("heat_base_cop_m3", 2.6)),
-                2: float(st.session_state.get("heat_base_cop_p2", 2.8)),
-                7: float(st.session_state.get("heat_base_cop_p7", 3.0)),
+                6: float(st.session_state.get("heat_base_cop_p6", 2.8)),
+                12: float(st.session_state.get("heat_base_cop_p12", 3.0)),
             }
             cop_base = weighted_avg(pts, SH_WEIGHTS_3[heat_climate])
     else:
@@ -945,8 +952,8 @@ def run_heating():
         else:
             pts = {
                 -3: float(st.session_state.get("heat_base_cop_m3", 2.6)),
-                2: float(st.session_state.get("heat_base_cop_p2", 2.8)),
-                7: float(st.session_state.get("heat_base_cop_p7", 3.0)),
+                6: float(st.session_state.get("heat_base_cop_p6", 2.8)),
+                12: float(st.session_state.get("heat_base_cop_p12", 3.0)),
             }
             cop_base = weighted_avg(pts, SH_WEIGHTS_3[heat_climate])
 
@@ -1091,13 +1098,9 @@ def run_heating():
     # Export tab
     # =====================================================
     with t3:
-        st.markdown("### Report preset (select what you need)")
-        preset = st.radio(
-            "PDF report type",
-            ["Client One-Pager", "Sales Proposal", "Technical (with Appendix)", "Financial Focus"],
-            index=0,
-            horizontal=True,
-        )
+
+        st.markdown("### Unified PDF report")
+        st.caption("This report combines executive summary, inputs, charts, and calculation appendix into one PDF.")
 
         report_title = "Heat Pump vs Gas Boiler — Report"
         if project_name:
@@ -1124,6 +1127,7 @@ def run_heating():
         else:
             narrative = "Could not compute % savings (gas baseline cost is zero or undefined)."
 
+        # Charts for the PDF
         img_cost = fig_to_imagereader(
             barh_chart(
                 ["Gas Boiler", "HP System"],
@@ -1154,24 +1158,42 @@ def run_heating():
         E_boost_total = chain_sh["E_boost"] + chain_dhw["E_boost"]
         cost_hp_base = E_base_total * el_price
         cost_hp_boost = E_boost_total * el_price
+
         img_cost_stacked = fig_to_imagereader(
-            stacked_bar_cost_hp(cost_gas, cost_hp_base, cost_hp_boost)
+            stacked_bar_cost_hp(cost_gas, cost_hp_base, cost_hp_boost, title="Annual cost comparison (HP breakdown)")
         )
 
+        # Simple sensitivity (always included)
         sens_rows = []
-        if preset == "Financial Focus":
-            el_up = el_price * 1.20
-            gas_up = gas_price * 1.20
-            base_sav = cost_gas - cost_hp
-            sav_el_up = cost_gas - (E_total_hp * el_up)
-            cost_gas_gasup = gas_m3 * gas_up
-            sav_gas_up = cost_gas_gasup - cost_hp
+        el_up = el_price * 1.20
+        gas_up = gas_price * 1.20
+        base_sav = cost_gas - cost_hp
+        sav_el_up = cost_gas - (E_total_hp * el_up)
+        cost_gas_gasup = gas_m3 * gas_up
+        sav_gas_up = cost_gas_gasup - cost_hp
 
-            sens_rows = [
-                ["Base case", f"{el_price:.3f}", f"{gas_price:.2f}", f"{base_sav:,.0f}"],
-                ["Electricity +20%", f"{el_up:.3f}", f"{gas_price:.2f}", f"{sav_el_up:,.0f}"],
-                ["Gas +20%", f"{el_price:.3f}", f"{gas_up:.2f}", f"{sav_gas_up:,.0f}"],
-            ]
+        sens_rows = [
+            ["Base case", f"{el_price:.3f}", f"{gas_price:.2f}", f"{base_sav:,.0f}"],
+            ["Electricity +20%", f"{el_up:.3f}", f"{gas_price:.2f}", f"{sav_el_up:,.0f}"],
+            ["Gas +20%", f"{el_price:.3f}", f"{gas_up:.2f}", f"{sav_gas_up:,.0f}"],
+        ]
+
+        # Payback (optional) — included ONLY if enabled and inputs are provided
+        payback_lines = []
+        payback_kpis = []
+        if st.session_state.get("heat_enable_payback", False):
+            delta_capex = float(st.session_state.get("heat_capex_hp", 0.0)) - float(st.session_state.get("heat_capex_boiler", 0.0))
+            payback_kpis.append(("Extra CAPEX (HP − Boiler)", f"{delta_capex:,.0f} GEL"))
+            if savings > 0 and delta_capex > 0:
+                pb_years = delta_capex / savings
+                payback_kpis.append(("Payback (years)", f"{pb_years:.2f}"))
+                payback_kpis.append(("Payback (months)", f"{pb_years*12:.1f}"))
+                payback_lines.append(
+                    f"Payback computed as extra CAPEX (HP − Boiler) / annual savings: {pb_years:.2f} years."
+                )
+            else:
+                payback_kpis.append(("Payback", "N/A"))
+                payback_lines.append("Payback is N/A (requires positive savings and extra CAPEX).")
 
         sections = []
 
@@ -1183,8 +1205,12 @@ def run_heating():
             ("Savings (%)", f"{pct_savings:.1f}%" if cost_gas > 0 else "N/A"),
             ("Boosted share", f"{boosted_share_pct}%"),
             ("Seasonal COP used", f"{cop_base:.2f}"),
+            ("Effective system COP", f"{eff_cop:.2f}"),
             ("CO2 baseline (gas)", f"{gas_co2_tonnes_per_year:,.2f} tCO2/yr"),
         ]
+        if payback_kpis:
+            kpis.extend(payback_kpis)
+
         sections.append({"type": "kpi", "title": "Executive Summary", "items": kpis})
         sections.append({"type": "text", "title": "Summary", "lines": [narrative]})
 
@@ -1207,86 +1233,59 @@ def run_heating():
             inputs_rows.append(["Gas baseline source", "Derived from heat demand"])
             inputs_rows.append(["Derived gas (m³/year)", f"{gas_m3:,.0f}"])
 
+        sections.append({"type": "table", "title": "Inputs (snapshot)", "columns": ["Item", "Value"], "rows": inputs_rows})
+
+        demand_rows = [
+            ["Total useful heat", f"{Q_total:,.0f} kWh_th/yr"],
+            ["Space heating (SH)", f"{Q_sh:,.0f} kWh_th/yr"],
+            ["Domestic hot water (DHW)", f"{Q_dhw:,.0f} kWh_th/yr (target {dhw_target_c}°C)"],
+            ["Boosted share (>50°C)", f"{boosted_share_pct}%"],
+            ["Boosted heat", f"{(Q_sh_high + Q_dhw_high):,.0f} kWh_th/yr"],
+            ["Non-boosted heat", f"{(Q_total - (Q_sh_high + Q_dhw_high)):,.0f} kWh_th/yr"],
+        ]
+        sections.append({"type": "table", "title": "Demand & temperature split", "columns": ["Metric", "Value"], "rows": demand_rows})
+
+        sections.append({"type": "image", "title": "Annual cost comparison", "image": img_cost, "w_cm": 16, "h_cm": 6.5})
+        sections.append({"type": "image", "title": "Annual cost comparison (HP breakdown)", "image": img_cost_stacked, "w_cm": 16, "h_cm": 7})
+        sections.append({"type": "image", "title": "Heat demand split", "image": img_pie_split, "w_cm": 15, "h_cm": 7})
+        if boosted_share_pct > 0:
+            sections.append({"type": "image", "title": "Boosted share (>50°C)", "image": img_pie_boost, "w_cm": 15, "h_cm": 7})
+
+        if payback_lines:
+            sections.append({"type": "text", "title": "Payback", "lines": payback_lines})
+
         sections.append(
-            {"type": "table", "title": "Inputs (snapshot)", "columns": ["Item", "Value"], "rows": inputs_rows}
+            {
+                "type": "table",
+                "title": "Price sensitivity (stress test)",
+                "columns": ["Scenario", "Electricity (GEL/kWh)", "Gas (GEL/m³)", "Savings (GEL/yr)"],
+                "rows": sens_rows,
+            }
         )
 
-        if preset in ["Client One-Pager", "Sales Proposal", "Financial Focus"]:
-            sections.append({"type": "image", "title": "Annual cost comparison", "image": img_cost, "w_cm": 16, "h_cm": 6.5})
+        tech_rows = [
+            ["Total electricity (HP system) (kWh_el/yr)", f"{E_total_hp:,.0f}"],
+            ["HP electricity base (kWh_el/yr)", f"{E_base_total:,.0f}"],
+            ["HP electricity booster (kWh_el/yr)", f"{E_boost_total:,.0f}"],
+            ["Gas input energy (kWh/yr)", f"{gas_input_kwh:,.0f}"],
+            ["Gas volume (m³/yr)", f"{gas_m3:,.0f}"],
+            ["Annual cost (Gas) (GEL/yr)", f"{cost_gas:,.0f}"],
+            ["Annual cost (HP) (GEL/yr)", f"{cost_hp:,.0f}"],
+        ]
+        sections.append({"type": "table", "title": "Calculation breakdown", "columns": ["Item", "Value"], "rows": tech_rows})
 
-        if preset in ["Client One-Pager", "Sales Proposal"]:
-            sections.append({"type": "image", "title": "Heat demand split", "image": img_pie_split, "w_cm": 15, "h_cm": 7})
-
-        if preset == "Sales Proposal":
-            if boosted_share_pct > 0:
-                sections.append({"type": "image", "title": "Boosted share", "image": img_pie_boost, "w_cm": 15, "h_cm": 7})
-
-            sections.append(
-                {
-                    "type": "text",
-                    "title": "Next steps",
-                    "lines": [
-                        "• Confirm space-heating temperature regime and whether any emitters require >50°C supply.",
-                        "• Confirm DHW share and DHW target temperature (50°C vs 60°C).",
-                        "• Validate whether gas bills include DHW / kitchen / process loads.",
-                        "• Obtain HP datasheet and confirm SCOP / winter COP points for final proposal.",
-                    ],
-                }
-            )
-
-        if preset == "Financial Focus":
-            if sens_rows:
-                sections.append(
-                    {
-                        "type": "table",
-                        "title": "Price sensitivity (stress test)",
-                        "columns": ["Scenario", "Electricity (GEL/kWh)", "Gas (GEL/m³)", "Savings (GEL/yr)"],
-                        "rows": sens_rows,
-                    }
-                )
-            sections.append(
-                {
-                    "type": "text",
-                    "title": "Interpretation",
-                    "lines": [
-                        "Sensitivity shows how savings change if energy prices move, keeping demand and system performance unchanged.",
-                        "This is not a forecast; it is a robustness check for decision-making.",
-                    ],
-                }
-            )
-
-        if preset == "Technical (with Appendix)":
-            sections.append({"type": "image", "title": "Annual cost comparison (HP breakdown)", "image": img_cost_stacked, "w_cm": 16, "h_cm": 7})
-
-            tech_rows = [
-                ["Total useful heat (kWh_th/yr)", f"{Q_total:,.0f}"],
-                ["SH useful heat (kWh_th/yr)", f"{Q_sh:,.0f}"],
-                ["DHW useful heat (kWh_th/yr)", f"{Q_dhw:,.0f}"],
-                ["Boosted useful heat (kWh_th/yr)", f"{(Q_sh_high + Q_dhw_high):,.0f}"],
-                ["Non-boosted useful heat (kWh_th/yr)", f"{(Q_total - (Q_sh_high + Q_dhw_high)):,.0f}"],
-                ["HP electricity base (kWh_el/yr)", f"{E_base_total:,.0f}"],
-                ["HP electricity booster (kWh_el/yr)", f"{E_boost_total:,.0f}"],
-                ["HP total electricity (kWh_el/yr)", f"{E_total_hp:,.0f}"],
-                ["Effective system COP", f"{eff_cop:.2f}"],
-                ["Gas input energy (kWh/yr)", f"{gas_input_kwh:,.0f}"],
-                ["Gas volume (m³/yr)", f"{gas_m3:,.0f}"],
-                ["CO2 baseline (tCO2/yr)", f"{gas_co2_tonnes_per_year:,.2f}"],
-            ]
-            sections.append(
-                {"type": "table", "title": "Appendix — Calculation breakdown", "columns": ["Metric", "Value"], "rows": tech_rows}
-            )
-
-            sections.append(
-                {
-                    "type": "text",
-                    "title": "Assumptions & limitations",
-                    "lines": [
-                        "• Base HP supply is capped at 50°C; demand above 50°C is treated as boosted share only if booster is installed.",
-                        "• Seasonal COP is an annual average (manual or derived). Actual performance depends on design and operating conditions.",
-                        "• CO2 shown is gas combustion baseline only (does not include electricity emissions).",
-                    ],
-                }
-            )
+        sections.append(
+            {
+                "type": "text",
+                "title": "Assumptions & limitations",
+                "lines": [
+                    "• Base HP supply is capped at 50°C; demand above 50°C is treated as boosted share only if booster is installed.",
+                    "• Seasonal COP is an annual average (manual or derived). Actual performance depends on design and operating conditions.",
+                    "• CO2 shown is gas combustion baseline only (does not include electricity emissions).",
+                    "• Sensitivity shows how savings change if energy prices move (±20%), keeping demand and performance unchanged.",
+                ],
+            }
+        )
 
         sections.append(
             {
@@ -1320,6 +1319,7 @@ def run_heating():
             use_container_width=True,
         )
 
+
         df_export = pd.DataFrame(
             [
                 ("Project", "Project name", project_name),
@@ -1335,7 +1335,7 @@ def run_heating():
                 ("Result", "Cost HP (GEL/year)", cost_hp),
                 ("Result", "Savings (GEL/year)", savings),
                 ("Result", "Gas CO2 (tCO2/year)", gas_co2_tonnes_per_year),
-                ("Report", "Preset", preset),
+                ("Report", "Type", "Unified"),
             ],
             columns=["Type", "Key", "Value"],
         )
