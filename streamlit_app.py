@@ -14,6 +14,32 @@ from reportlab.lib.utils import ImageReader
 from reportlab.lib import colors
 
 
+import hmac
+
+def login_gate():
+    st.title("Login")
+
+    user = st.text_input("Username")
+    pw = st.text_input("Password", type="password")
+
+    if st.button("Sign in", type="primary"):
+        ok_user = hmac.compare_digest(user, st.secrets.get("ADMIN_USER", ""))
+        ok_pass = hmac.compare_digest(pw, st.secrets.get("ADMIN_PASS", ""))
+        if ok_user and ok_pass:
+            st.session_state["auth_ok"] = True
+            st.rerun()
+        else:
+            st.error("Wrong username or password.")
+
+    st.stop()
+
+if not st.session_state.get("auth_ok", False):
+    login_gate()
+
+# Optional logout button (put this somewhere in your app after login)
+# if st.button("Logout"):
+#     st.session_state["auth_ok"] = False
+#     st.rerun()
 # =========================================================
 # App Config
 # =========================================================
