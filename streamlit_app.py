@@ -118,92 +118,6 @@ def harmonic_mean_weighted_by_capacity(cap_list, eff_list):
     return num / den if den > 0 else 0.0
 
 
-def compute_multipipe_heat_recovery(
-    Q_cool_kwh: float,
-    Q_heat_coincident_kwh: float,
-    eff_cool_base: float,
-    cop_heat_alt: float,
-    ter_hr: float,
-    ratio_heat_per_cool: float,
-) -> dict:
-    """
-    Annual energy model (screening-level):
-
-    - Baseline (no heat recovery):
-        E_cool_base = Q_cool / eff_cool_base
-        E_heat_alt  = Q_heat_coincident / cop_heat_alt
-
-    - Heat recovery case:
-        The HR chiller can recover about `ratio_heat_per_cool` kWh_th of heat per 1 kWh_cool delivered
-        while operating in simultaneous mode.
-
-        We allocate a portion of annual cooling energy to simultaneous mode only as much as needed
-        to cover coincident heating demand (e.g., DHW during cooling season), capped by available cooling.
-
-        Q_cool_hr_needed = min(Q_cool, Q_heat_coincident / ratio)
-        Q_heat_from_hr   = Q_cool_hr_needed * ratio
-
-        Electricity for HR portion uses TER:
-          TER = (Q_cool + Q_heat) / E_el  =>  E_el = (Q_cool + Q_heat)/TER
-
-        Any remaining cooling is served in cooling-only mode using eff_cool_base.
-        Any remaining coincident heating is served by the alternative heat source (HP+booster aggregated COP).
-
-    Returns kWh_el for baseline and HR case and the split.
-    """
-    Q_cool_kwh = max(0.0, float(Q_cool_kwh))
-    Q_heat_coincident_kwh = max(0.0, float(Q_heat_coincident_kwh))
-
-    eff_cool_base = max(1e-9, float(eff_cool_base))
-    cop_heat_alt = max(1e-9, float(cop_heat_alt))
-    ter_hr = max(1e-9, float(ter_hr))
-    ratio_heat_per_cool = max(0.0, float(ratio_heat_per_cool))
-
-    # Baseline (no HR)
-    E_cool_base = Q_cool_kwh / eff_cool_base
-    E_heat_alt = Q_heat_coincident_kwh / cop_heat_alt
-    E_baseline = E_cool_base + E_heat_alt
-
-    if ratio_heat_per_cool <= 0:
-        # Can't recover heat if ratio unknown/zero
-        return {
-            "E_baseline": E_baseline,
-            "E_hr_total": E_baseline,
-            "Q_cool_hr": 0.0,
-            "Q_heat_from_hr": 0.0,
-            "E_hr": 0.0,
-            "E_cool_rem": E_cool_base,
-            "E_heat_rem": E_heat_alt,
-        }
-
-    # Allocate to HR mode only to cover coincident heating (bounded by cooling availability)
-    Q_cool_hr = min(Q_cool_kwh, Q_heat_coincident_kwh / ratio_heat_per_cool)
-    Q_heat_from_hr = Q_cool_hr * ratio_heat_per_cool
-
-    # HR electricity from TER
-    E_hr = (Q_cool_hr + Q_heat_from_hr) / ter_hr
-
-    # Remaining loads
-    Q_cool_rem = max(0.0, Q_cool_kwh - Q_cool_hr)
-    Q_heat_rem = max(0.0, Q_heat_coincident_kwh - Q_heat_from_hr)
-
-    E_cool_rem = Q_cool_rem / eff_cool_base
-    E_heat_rem = Q_heat_rem / cop_heat_alt
-
-    E_hr_total = E_hr + E_cool_rem + E_heat_rem
-
-    return {
-        "E_baseline": E_baseline,
-        "E_hr_total": E_hr_total,
-        "Q_cool_hr": Q_cool_hr,
-        "Q_heat_from_hr": Q_heat_from_hr,
-        "E_hr": E_hr,
-        "E_cool_rem": E_cool_rem,
-        "E_heat_rem": E_heat_rem,
-    }
-
-
-
 # =========================================================
 # Rich PDF Builder (Treimax Georgia, no logo)
 # FIXED: nonlocal y binding + KPI overlap + indentation
@@ -508,16 +422,6 @@ PROJECT_KEYS = [
     "ch_enable_payback",
     "ch_capex_a",
     "ch_capex_b",
-
-    # HEAT RECOVERY (Multipipe) — optional
-    "ch_hr_mode",  # Cooling-only vs Heat recovery
-    "ch_hr_q_heat_coincident",
-    "ch_hr_alt_heat_cop",
-    "ch_hr_ter",
-    "ch_hr_cool_kw",
-    "ch_hr_heat_kw",
-    "ch_hr_power_kw",
-    "ch_hr_ratio_heat_per_cool",
 ]
 
 for setup in ["a", "b"]:
@@ -1483,49 +1387,8 @@ def run_chiller():
         "- Payback (optional) = extra CAPEX / savings"
     )
 
-    st.radio(
-        "Calculation mode",
-        ["Cooling-only comparison", "Heat recovery (multipipe: cooling + coincident DHW/heating)"],
-        index=0,
-        key="ch_hr_mode",
-    )
-
     with st.sidebar:
         st.header("Chiller Inputs")
-
-        ch_mode = st.session_state.get("ch_hr_mode", "Cooling-only comparison")
-
-        with st.expander("♻️ Heat recovery (multipipe) inputs", expanded=(ch_mode.startswith("Heat recovery"))):
-            st.number_input(
-                "Coincident heating demand during cooling operation (kWh_th/year)",
-                min_value=0.0,
-                value=float(st.session_state.get("ch_hr_q_heat_coincident", 2_400_000.0)),
-                step=100_000.0,
-                key="ch_hr_q_heat_coincident",
-                help="Portion of DHW/heating that occurs while chillers are in cooling mode (Apr/May–Oct). This is the recoverable target.",
-            )
-            st.number_input(
-                "Alternative heat source COP for that coincident load (effective)",
-                min_value=0.5,
-                value=float(st.session_state.get("ch_hr_alt_heat_cop", 3.0)),
-                step=0.1,
-                key="ch_hr_alt_heat_cop",
-                help="Effective COP if you did NOT have heat recovery (e.g., HP + booster chain aggregated).",
-            )
-
-            st.markdown("**Trane multipipe datasheet point (defaults can be edited)**")
-            st.number_input("TER (simultaneous total energy ratio)", min_value=0.5, value=float(st.session_state.get("ch_hr_ter", 7.73)), step=0.01, key="ch_hr_ter")
-            st.number_input("Cooling capacity at HR point (kW)", min_value=1.0, value=float(st.session_state.get("ch_hr_cool_kw", 638.0)), step=1.0, key="ch_hr_cool_kw")
-            st.number_input("Heating recovery at HR point (kW)", min_value=0.0, value=float(st.session_state.get("ch_hr_heat_kw", 800.0)), step=1.0, key="ch_hr_heat_kw")
-            st.number_input("Electrical power at HR point (kW)", min_value=0.0, value=float(st.session_state.get("ch_hr_power_kw", 186.16)), step=0.1, key="ch_hr_power_kw")
-            st.number_input(
-                "Heat-to-cool ratio (kWh_th recovered per kWh_cool)",
-                min_value=0.0,
-                value=float(st.session_state.get("ch_hr_ratio_heat_per_cool", 800.0/638.0)),
-                step=0.01,
-                key="ch_hr_ratio_heat_per_cool",
-                help="If left as default, derived from heating/cooling at the HR datasheet point.",
-            )
         st.number_input("Electricity price (GEL/kWh)", min_value=0.001, value=0.30, step=0.01, format="%.3f", key="ch_el_price")
 
         st.divider()
@@ -1623,67 +1486,22 @@ def run_chiller():
     eff_b = setup_b["eff_weighted"]
 
     el_price = float(st.session_state.get("ch_el_price", 0.30))
-    ch_mode = st.session_state.get("ch_hr_mode", "Cooling-only comparison")
 
-    if ch_mode.startswith("Cooling-only"):
-        # Existing behavior: compare two cooling-only setups
-        E_a = (Q_cool / eff_a) if eff_a > 0 else 0.0
-        E_b = (Q_cool / eff_b) if eff_b > 0 else 0.0
+    E_a = (Q_cool / eff_a) if eff_a > 0 else 0.0
+    E_b = (Q_cool / eff_b) if eff_b > 0 else 0.0
 
-        cost_a = E_a * el_price
-        cost_b = E_b * el_price
-        savings = cost_a - cost_b
+    cost_a = E_a * el_price
+    cost_b = E_b * el_price
+    savings = cost_a - cost_b
 
-        # For downstream UI reuse
-        hr_details = None
-        demand_note_extra = ""
-    else:
-        # Heat recovery screening model (multipipe)
-        # Baseline cooling efficiency comes from Setup A weighted efficiency
-        eff_cool_base = eff_a if eff_a > 0 else 0.0
-
-        Q_heat_coincident = float(st.session_state.get("ch_hr_q_heat_coincident", 0.0))
-        cop_heat_alt = float(st.session_state.get("ch_hr_alt_heat_cop", 3.0))
-        ter_hr = float(st.session_state.get("ch_hr_ter", 7.73))
-        ratio = float(st.session_state.get("ch_hr_ratio_heat_per_cool", 0.0))
-
-        hr_details = compute_multipipe_heat_recovery(
-            Q_cool_kwh=Q_cool,
-            Q_heat_coincident_kwh=Q_heat_coincident,
-            eff_cool_base=eff_cool_base if eff_cool_base > 0 else 1e-9,
-            cop_heat_alt=cop_heat_alt,
-            ter_hr=ter_hr,
-            ratio_heat_per_cool=ratio,
-        )
-
-        # Define A = Baseline (no HR), B = With HR
-        E_a = hr_details["E_baseline"]
-        E_b = hr_details["E_hr_total"]
-
-        cost_a = E_a * el_price
-        cost_b = E_b * el_price
-        savings = cost_a - cost_b
-
-        demand_note_extra = (
-            f" | Coincident heat: {Q_heat_coincident:,.0f} kWh_th/yr | "
-            f"Alt heat COP: {cop_heat_alt:.2f} | TER: {ter_hr:.2f} | Heat/Cool ratio: {ratio:.2f}"
-        )
     st.divider()
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("Annual cooling demand", f"{Q_cool:,.0f} kWh_cool")
-    if ch_mode.startswith("Cooling-only"):
-        k2.metric(f"{label_a} weighted eff.", f"{eff_a:.2f}" if eff_a > 0 else "N/A")
-        k3.metric(f"{label_b} weighted eff.", f"{eff_b:.2f}" if eff_b > 0 else "N/A")
-        k4.metric("Savings (A − B)", f"{savings:,.0f} GEL/yr")
-    else:
-        Q_heat_coincident = float(st.session_state.get("ch_hr_q_heat_coincident", 0.0))
-        ter_hr = float(st.session_state.get("ch_hr_ter", 7.73))
-        k2.metric("Coincident heat demand", f"{Q_heat_coincident:,.0f} kWh_th")
-        k3.metric("TER used (simultaneous)", f"{ter_hr:.2f}")
-        k4.metric("Savings (no HR − HR)", f"{savings:,.0f} GEL/yr")
+    k2.metric(f"{label_a} weighted eff.", f"{eff_a:.2f}" if eff_a > 0 else "N/A")
+    k3.metric(f"{label_b} weighted eff.", f"{eff_b:.2f}" if eff_b > 0 else "N/A")
+    k4.metric("Savings (A − B)", f"{savings:,.0f} GEL/yr")
 
-
-    st.caption(f"Demand method: {demand_note}{demand_note_extra}")
+    st.caption(f"Demand method: {demand_note}")
 
     t1, t2, t3 = st.tabs(["📊 Summary", "🧮 Details", "📄 Export"])
 
@@ -1722,34 +1540,17 @@ def run_chiller():
                 p3.metric("Payback (months)", "N/A")
 
     with t2:
-        if ch_mode.startswith("Cooling-only"):
-            st.write("### Setups")
-            st.write(f"**{label_a}** total capacity: **{setup_a['total_cap_kw']:,.0f} kW** | weighted efficiency: **{eff_a:.2f}**")
-            st.dataframe(pd.DataFrame(setup_a["rows"]))
-            st.write(f"**{label_b}** total capacity: **{setup_b['total_cap_kw']:,.0f} kW** | weighted efficiency: **{eff_b:.2f}**")
-            st.dataframe(pd.DataFrame(setup_b["rows"]))
+        st.write("### Setups")
+        st.write(f"**{label_a}** total capacity: **{setup_a['total_cap_kw']:,.0f} kW** | weighted efficiency: **{eff_a:.2f}**")
+        st.dataframe(pd.DataFrame(setup_a["rows"]))
+        st.write(f"**{label_b}** total capacity: **{setup_b['total_cap_kw']:,.0f} kW** | weighted efficiency: **{eff_b:.2f}**")
+        st.dataframe(pd.DataFrame(setup_b["rows"]))
 
-            st.divider()
-            st.write("### Electricity & costs")
-            st.write(f"- {label_a} electricity: **{E_a:,.0f} kWh_el/year**")
-            st.write(f"- {label_b} electricity: **{E_b:,.0f} kWh_el/year**")
-            st.write(f"- Electricity price: **{el_price:.3f} GEL/kWh**")
-        else:
-            st.write("### Heat recovery allocation (screening model)")
-            if hr_details is None:
-                st.warning("Heat recovery details are not available (check inputs).")
-            else:
-                st.write(f"- Cooling served in simultaneous HR mode: **{hr_details['Q_cool_hr']:,.0f} kWh_cool/yr**")
-                st.write(f"- Heat recovered (used on-site): **{hr_details['Q_heat_from_hr']:,.0f} kWh_th/yr**")
-                st.write(f"- Electricity for HR portion: **{hr_details['E_hr']:,.0f} kWh_el/yr**")
-                st.write(f"- Electricity for remaining cooling (cooling-only): **{hr_details['E_cool_rem']:,.0f} kWh_el/yr**")
-                st.write(f"- Electricity for remaining coincident heat (alt source): **{hr_details['E_heat_rem']:,.0f} kWh_el/yr**")
-                st.divider()
-                st.write("### Totals")
-                st.write(f"- Baseline (no HR) electricity: **{E_a:,.0f} kWh_el/yr**")
-                st.write(f"- With HR electricity: **{E_b:,.0f} kWh_el/yr**")
-                st.write(f"- Electricity price: **{el_price:.3f} GEL/kWh**")
-
+        st.divider()
+        st.write("### Electricity & costs")
+        st.write(f"- {label_a} electricity: **{E_a:,.0f} kWh_el/year**")
+        st.write(f"- {label_b} electricity: **{E_b:,.0f} kWh_el/year**")
+        st.write(f"- Electricity price: **{el_price:.3f} GEL/kWh**")
 
     with t3:
         project_name = (st.session_state.get("project_name") or "").strip()
